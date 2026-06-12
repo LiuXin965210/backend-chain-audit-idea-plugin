@@ -2,6 +2,7 @@ package com.liuxin.backendchain.analysis
 
 import com.intellij.psi.PsiAnnotation
 import com.intellij.psi.PsiElement
+import com.intellij.psi.PsiExpression
 import com.intellij.psi.PsiField
 import com.intellij.psi.PsiReferenceExpression
 import com.intellij.psi.SmartPointerManager
@@ -14,7 +15,7 @@ class InfrastructureExtractor : ResourceExtractor {
         val target = context.resolvedMethod
         val owner = target?.containingClass?.qualifiedName.orEmpty()
         val name = target?.name.orEmpty()
-        val args = call?.argumentList?.expressions.orEmpty().mapNotNull(::constantString)
+        val args = call?.argumentList?.expressions.orEmpty().mapNotNull(::configuredString)
         val pointer = (call ?: target ?: context.method).let {
             SmartPointerManager.getInstance(it.project).createSmartPsiElementPointer(it)
         }
@@ -42,8 +43,15 @@ class InfrastructureExtractor : ResourceExtractor {
         }
 
         when {
-            owner.contains("Kafka") || name == "send" && context.sourceText.contains("Kafka") -> args.firstOrNull()?.let {
-                result += ResourceRef(ResourceType.KAFKA, it, Operation.PRODUCE, Confidence.INFERRED, "$owner.$name", pointer)
+            owner.contains("Kafka") || name == "send" && context.sourceText.contains("Kafka") -> {
+                val topic = kafkaTopic(target, call)
+                topic?.let {
+                    result += ResourceRef(
+                        ResourceType.KAFKA, it, Operation.PRODUCE,
+                        if (it.startsWith("\${")) Confidence.CONFIRMED else Confidence.INFERRED,
+                        "$owner.$name", pointer
+                    )
+                }
             }
             jshProducerQueue != null -> result += ResourceRef(ResourceType.RABBITMQ, jshProducerQueue, Operation.PRODUCE, Confidence.CONFIRMED, "@JshRabbitProducer ${qualifierField?.name}", pointer)
             owner.contains("Rabbit") || name in setOf("convertAndSend", "send") && context.sourceText.contains("Rabbit") -> args.firstOrNull()?.let {
@@ -64,6 +72,31 @@ class InfrastructureExtractor : ResourceExtractor {
     private fun listener(method: com.intellij.psi.PsiMethod, vararg names: String): String? = names.firstNotNullOfOrNull { name ->
         annotationString(annotation(method, name), "topics", "topic", "queues", "queue", "value", "name")
     }
+
+    private fun kafkaTopic(target: com.intellij.psi.PsiMethod?, call: com.intellij.psi.PsiMethodCallExpression?): String? {
+        val callTopic = call?.argumentList?.expressions?.firstOrNull()?.let(::configuredString)
+        if (callTopic != null && (target?.containingClass?.qualifiedName?.contains("KafkaTemplate") == true || callTopic.contains("topic", true))) {
+            return callTopic
+        }
+        return target?.containingClass?.fields
+            ?.firstOrNull { field -> field.name.contains("topic", true) && valuePlaceholder(field) != null }
+            ?.let(::valuePlaceholder)
+    }
+
+    private fun configuredString(expression: PsiExpression): String? =
+        constantString(expression) ?: (expression as? PsiReferenceExpression)?.resolve()?.let { resolved ->
+            when (resolved) {
+                is PsiField -> valuePlaceholder(resolved)
+                else -> null
+            }
+        }
+
+    private fun valuePlaceholder(field: PsiField): String? = annotationString(
+        field.annotations.firstOrNull {
+            it.qualifiedName?.endsWith(".Value") == true || it.nameReferenceElement?.referenceName == "Value"
+        },
+        "value"
+    )
 
     private fun redisOperation(name: String): Operation = if (name.startsWith("get") || name.startsWith("has") || name.startsWith("opsFor")) Operation.READ else Operation.WRITE
 }

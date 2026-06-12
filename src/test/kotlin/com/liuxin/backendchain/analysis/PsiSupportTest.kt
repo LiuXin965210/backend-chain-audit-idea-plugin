@@ -154,6 +154,54 @@ class PsiSupportTest : BasePlatformTestCase() {
         assertEquals(1, result.resources.size)
     }
 
+    fun testExtractsKafkaTopicFromProducerValueField() {
+        myFixture.configureByText("KafkaValue.java", "@interface Value { String value(); }")
+        myFixture.configureByText(
+            "OrderKafkaProducer.java",
+            """
+                class OrderKafkaProducer {
+                    @Value("${'$'}{spring.kafka.order.producer.topic}") String orderTopic;
+                    Boolean send(String data) { return true; }
+                }
+                class OrderService {
+                    OrderKafkaProducer producer;
+                    void create(String data) { producer.send(data); }
+                }
+            """.trimIndent()
+        )
+
+        val method = findClass("OrderService").findMethodsByName("create", false).single()
+        val call = PsiTreeUtil.findChildOfType(method.body, PsiMethodCallExpression::class.java)!!
+        val resource = InfrastructureExtractor()
+            .extract(CallContext(method, call, call.resolveMethod(), call.text)).single()
+
+        assertEquals(ResourceType.KAFKA, resource.type)
+        assertEquals("${'$'}{spring.kafka.order.producer.topic}", resource.name)
+        assertEquals(Operation.PRODUCE, resource.operation)
+    }
+
+    fun testExtractsKafkaTopicFromKafkaTemplateArgumentValueField() {
+        myFixture.configureByText("KafkaValue2.java", "@interface Value { String value(); }")
+        myFixture.configureByText(
+            "KafkaTemplate.java",
+            """
+                class KafkaTemplate { void send(String topic, String data) {} }
+                class Producer {
+                    @Value("${'$'}{spring.kafka.order.producer.topic}") String orderTopic;
+                    KafkaTemplate template;
+                    void send(String data) { template.send(orderTopic, data); }
+                }
+            """.trimIndent()
+        )
+
+        val method = findClass("Producer").findMethodsByName("send", false).single()
+        val call = PsiTreeUtil.findChildOfType(method.body, PsiMethodCallExpression::class.java)!!
+        val resource = InfrastructureExtractor()
+            .extract(CallContext(method, call, call.resolveMethod(), call.text)).single()
+
+        assertEquals("${'$'}{spring.kafka.order.producer.topic}", resource.name)
+    }
+
     private fun findClass(name: String) = JavaPsiFacade.getInstance(project)
         .findClass(name, GlobalSearchScope.projectScope(project))
         ?: error("Class not found: $name")
