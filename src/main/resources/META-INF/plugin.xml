@@ -15,6 +15,10 @@
     <extensions defaultExtensionNs="com.intellij">
         <projectService serviceImplementation="com.liuxin.backendchain.analysis.ChainAnalysisService"/>
         <projectService serviceImplementation="com.liuxin.backendchain.settings.ChainAuditSettings"/>
+        <projectConfigurable id="com.liuxin.backendchain.settings"
+                             displayName="Backend Chain Audit"
+                             parentId="tools"
+                             instance="com.liuxin.backendchain.settings.ChainAuditConfigurable"/>
         <toolWindow id="Backend Chain Audit"
                     anchor="bottom"
                     factoryClass="com.liuxin.backendchain.ui.ChainAuditToolWindowFactory"/>

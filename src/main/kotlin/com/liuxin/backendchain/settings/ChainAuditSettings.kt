@@ -19,7 +19,7 @@ class ChainAuditSettings : PersistentStateComponent<ChainAuditSettings.State> {
 
     fun options() = AnalysisOptions(
         maxDepth = state.maxDepth.coerceIn(1, 100),
-        excludedPackagePrefixes = state.excludedPackages.split(',').map(String::trim).filter(String::isNotEmpty),
+        excludedPackagePrefixes = state.excludedPackages.split(',', '\n', '\r').map(String::trim).filter(String::isNotEmpty),
         followLocalMqConsumers = state.followLocalMqConsumers
     )
 }

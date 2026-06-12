@@ -6,8 +6,8 @@ import com.intellij.openapi.components.service
 import com.intellij.openapi.fileEditor.OpenFileDescriptor
 import com.intellij.openapi.fileChooser.FileChooserFactory
 import com.intellij.openapi.fileChooser.FileSaverDescriptor
+import com.intellij.openapi.options.ShowSettingsUtil
 import com.intellij.openapi.project.Project
-import com.intellij.openapi.ui.Messages
 import com.intellij.openapi.vfs.LocalFileSystem
 import com.intellij.ui.JBSplitter
 import com.intellij.ui.ScrollPaneFactory
@@ -21,7 +21,10 @@ import java.awt.BorderLayout
 import java.awt.event.MouseAdapter
 import java.awt.event.MouseEvent
 import javax.swing.*
+import javax.swing.event.DocumentEvent
+import javax.swing.event.DocumentListener
 import javax.swing.table.AbstractTableModel
+import javax.swing.table.TableRowSorter
 import javax.swing.tree.DefaultMutableTreeNode
 import javax.swing.tree.DefaultTreeModel
 
@@ -30,6 +33,10 @@ class ChainAuditPanel(private val project: Project) : JBPanel<ChainAuditPanel>(B
     private val tree = JTree(DefaultMutableTreeNode("调用链"))
     private val tableModel = ResourceTableModel()
     private val table = JBTable(tableModel)
+    private val tableSorter = TableRowSorter(tableModel)
+    private val typeFilter = JComboBox(arrayOf("全部类型") + ResourceType.entries.map { it.displayName }.toTypedArray())
+    private val resourceFilter = JTextField(18)
+    private val operationFilter = JComboBox(arrayOf("全部操作") + Operation.entries.map { it.displayName }.toTypedArray())
     private var result: AnalysisResult? = null
 
     init {
@@ -37,17 +44,33 @@ class ChainAuditPanel(private val project: Project) : JBPanel<ChainAuditPanel>(B
             layout = BoxLayout(this, BoxLayout.X_AXIS)
             add(title)
             add(Box.createHorizontalGlue())
-            add(JButton("设置").apply { addActionListener { editSettings() } })
+            add(JButton("设置").apply { addActionListener { openSettings() } })
             add(JButton("导出 Markdown").apply { addActionListener { export("md") } })
             add(JButton("导出 Mermaid").apply { addActionListener { export("mmd") } })
         }
+        table.rowSorter = tableSorter
+        val resourceFilters = JPanel().apply {
+            layout = BoxLayout(this, BoxLayout.X_AXIS)
+            border = BorderFactory.createEmptyBorder(2, 4, 2, 4)
+            add(JLabel("类型：")); add(typeFilter)
+            add(Box.createHorizontalStrut(8))
+            add(JLabel("资源：")); add(resourceFilter)
+            add(Box.createHorizontalStrut(8))
+            add(JLabel("操作：")); add(operationFilter)
+            add(Box.createHorizontalGlue())
+        }
+        val resourcePanel = JPanel(BorderLayout()).apply {
+            add(resourceFilters, BorderLayout.NORTH)
+            add(ScrollPaneFactory.createScrollPane(table), BorderLayout.CENTER)
+        }
         val splitter = JBSplitter(false, 0.45f).apply {
             firstComponent = ScrollPaneFactory.createScrollPane(tree)
-            secondComponent = ScrollPaneFactory.createScrollPane(table)
+            secondComponent = resourcePanel
         }
         add(toolbar, BorderLayout.NORTH)
         add(splitter, BorderLayout.CENTER)
         installNavigation()
+        installResourceFilters()
     }
 
     fun showResult(result: AnalysisResult) {
@@ -119,17 +142,31 @@ class ChainAuditPanel(private val project: Project) : JBPanel<ChainAuditPanel>(B
         wrapper.file.writeText(text)
     }
 
-    private fun editSettings() {
-        val settings = project.service<ChainAuditSettings>()
-        val state = settings.state
-        val depth = Messages.showInputDialog(project, "最大方法递归深度（1-100）：", "Backend Chain Audit 设置", null, state.maxDepth.toString(), null)
-            ?.toIntOrNull()?.coerceIn(1, 100) ?: return
-        val excludes = Messages.showInputDialog(project, "排除包前缀，逗号分隔：", "Backend Chain Audit 设置", null, state.excludedPackages, null) ?: return
-        val followMq = Messages.showYesNoDialog(project, "是否沿本地 RabbitMQ/Kafka topic 继续定位消费者？", "Backend Chain Audit 设置", null) == Messages.YES
-        state.maxDepth = depth
-        state.excludedPackages = excludes
-        state.followLocalMqConsumers = followMq
+    private fun installResourceFilters() {
+        typeFilter.addActionListener { applyResourceFilters() }
+        operationFilter.addActionListener { applyResourceFilters() }
+        resourceFilter.document.addDocumentListener(object : DocumentListener {
+            override fun insertUpdate(e: DocumentEvent) = applyResourceFilters()
+            override fun removeUpdate(e: DocumentEvent) = applyResourceFilters()
+            override fun changedUpdate(e: DocumentEvent) = applyResourceFilters()
+        })
     }
+
+    private fun applyResourceFilters() {
+        val selectedType = typeFilter.selectedItem?.toString().orEmpty()
+        val selectedOperation = operationFilter.selectedItem?.toString().orEmpty()
+        val resourceText = resourceFilter.text.trim()
+        tableSorter.rowFilter = object : RowFilter<ResourceTableModel, Int>() {
+            override fun include(entry: Entry<out ResourceTableModel, out Int>): Boolean {
+                val typeMatches = selectedType == "全部类型" || entry.getStringValue(0) == selectedType
+                val resourceMatches = resourceText.isBlank() || entry.getStringValue(1).contains(resourceText, ignoreCase = true)
+                val operationMatches = selectedOperation == "全部操作" || entry.getStringValue(2) == selectedOperation
+                return typeMatches && resourceMatches && operationMatches
+            }
+        }
+    }
+
+    private fun openSettings() = ShowSettingsUtil.getInstance().showSettingsDialog(project, "com.liuxin.backendchain.settings")
 
     private fun treeRoot() = tree.model.root as DefaultMutableTreeNode
     override fun dispose() = Unit
