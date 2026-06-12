@@ -10,6 +10,8 @@ class ChainAuditSettings : PersistentStateComponent<ChainAuditSettings.State> {
         var maxDepth: Int = 30,
         var excludedPackages: String = "java.,javax.,jakarta.,kotlin.,org.springframework.",
         var followLocalMqConsumers: Boolean = true,
+        var deduplicateResources: Boolean = false,
+        var customHttpClientClasses: String = "jsh.mgt.lib.http.BasicHttpUtil",
         var localServiceDirectories: String = ""
     )
 
@@ -20,6 +22,9 @@ class ChainAuditSettings : PersistentStateComponent<ChainAuditSettings.State> {
     fun options() = AnalysisOptions(
         maxDepth = state.maxDepth.coerceIn(1, 100),
         excludedPackagePrefixes = state.excludedPackages.split(',', '\n', '\r').map(String::trim).filter(String::isNotEmpty),
-        followLocalMqConsumers = state.followLocalMqConsumers
+        followLocalMqConsumers = state.followLocalMqConsumers,
+        deduplicateResources = state.deduplicateResources,
+        customHttpClientClassPrefixes = state.customHttpClientClasses.split(',', '\n', '\r')
+            .map(String::trim).filter(String::isNotEmpty)
     )
 }

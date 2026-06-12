@@ -81,5 +81,7 @@ data class AnalysisResult(
 data class AnalysisOptions(
     val maxDepth: Int = 30,
     val excludedPackagePrefixes: List<String> = listOf("java.", "javax.", "jakarta.", "kotlin.", "org.springframework."),
-    val followLocalMqConsumers: Boolean = true
+    val followLocalMqConsumers: Boolean = true,
+    val deduplicateResources: Boolean = false,
+    val customHttpClientClassPrefixes: List<String> = listOf("jsh.mgt.lib.http.BasicHttpUtil")
 )

@@ -4,6 +4,7 @@ import com.intellij.openapi.project.Project
 import com.intellij.psi.*
 import com.intellij.psi.search.GlobalSearchScope
 import com.intellij.psi.search.searches.ClassInheritorsSearch
+import com.intellij.psi.util.MethodSignatureUtil
 import com.intellij.psi.util.PsiTreeUtil
 
 internal fun PsiMethod.methodKey(): String {
@@ -40,9 +41,8 @@ internal fun resolveImplementations(project: Project, method: PsiMethod, call: P
     }
     val implementations = ClassInheritorsSearch.search(owner, GlobalSearchScope.projectScope(project), true)
         .findAll()
-        .flatMap { inheritor ->
-            inheritor.findMethodsBySignature(method, true).filter { !it.hasModifierProperty(PsiModifier.ABSTRACT) }
-        }
+        .mapNotNull { inheritor -> MethodSignatureUtil.findMethodBySuperMethod(inheritor, method, false) }
+        .filter { !it.hasModifierProperty(PsiModifier.ABSTRACT) }
         .distinctBy { it.methodKey() }
     if (implementations.size <= 1) return implementations
 

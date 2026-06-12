@@ -1,8 +1,17 @@
 package com.liuxin.backendchain.analysis
 
 import com.intellij.psi.JavaPsiFacade
+import com.intellij.psi.PsiMethodCallExpression
 import com.intellij.psi.search.GlobalSearchScope
+import com.intellij.psi.util.PsiTreeUtil
 import com.intellij.testFramework.fixtures.BasePlatformTestCase
+import com.liuxin.backendchain.model.AnalysisOptions
+import com.liuxin.backendchain.model.EntryPoint
+import com.liuxin.backendchain.model.EntryType
+import com.liuxin.backendchain.model.Operation
+import com.liuxin.backendchain.model.ResourceRef
+import com.liuxin.backendchain.model.ResourceType
+import com.liuxin.backendchain.model.Confidence
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 
@@ -70,6 +79,79 @@ class PsiSupportTest : BasePlatformTestCase() {
 
         assertTrue(result.callGraph.methods.values.none { it.className.startsWith("java.") })
         assertTrue(result.callGraph.methods.values.any { it.methodName == "save" })
+    }
+
+    fun testFindsInterfaceImplementationBySuperMethod() {
+        myFixture.configureByText(
+            "ReplenishService.java",
+            """
+                interface ReplenishService {
+                    void save(String value);
+                }
+                class ReplenishServiceImpl implements ReplenishService {
+                    @Override public void save(String value) {}
+                }
+            """.trimIndent()
+        )
+
+        val method = findClass("ReplenishService").findMethodsByName("save", false).single()
+        val targets = resolveImplementations(project, method)
+
+        assertEquals(listOf("ReplenishServiceImpl"), targets.map { it.containingClass?.name })
+    }
+
+    fun testExtractsBasicHttpUtilConfiguredPrefixAndConstantPath() {
+        myFixture.configureByText("Value.java", "@interface Value { String value(); }")
+        myFixture.configureByText(
+            "JshApiClient.java",
+            """
+                class BasicHttpUtil {
+                    Object postForObject(String url, Object body) { return null; }
+                }
+                class JshApiClient {
+                    @Value("${'$'}{replenish.jsh.open-api-prefix}") String domainUrl;
+                    BasicHttpUtil basicHttpUtil;
+                    void createPopscOrder(Object body) {
+                        basicHttpUtil.postForObject(
+                            domainUrl + "/btbrrs/jsh-zhilian/api/popsc/receive", body);
+                    }
+                }
+            """.trimIndent()
+        )
+
+        val method = findClass("JshApiClient").findMethodsByName("createPopscOrder", false).single()
+        val call = PsiTreeUtil.findChildOfType(method.body, PsiMethodCallExpression::class.java)!!
+        val resource = ExternalHttpExtractor(listOf("BasicHttpUtil"))
+            .extract(CallContext(method, call, call.resolveMethod(), call.text)).single()
+
+        assertEquals(ResourceType.EXTERNAL_HTTP, resource.type)
+        assertEquals("POST \${replenish.jsh.open-api-prefix}/btbrrs/jsh-zhilian/api/popsc/receive", resource.name)
+    }
+
+    fun testDeduplicatesMysqlAndExternalResourcesWhenEnabled() {
+        myFixture.configureByText(
+            "ResourceService.java",
+            """
+                class ResourceService {
+                    void run() { first(); second(); }
+                    void first() {}
+                    void second() {}
+                }
+            """.trimIndent()
+        )
+        val method = findClass("ResourceService").findMethodsByName("run", false).single()
+        val extractor = object : ResourceExtractor {
+            override fun extract(context: CallContext): List<ResourceRef> {
+                val target = context.resolvedMethod ?: return emptyList()
+                if (target.name !in setOf("first", "second")) return emptyList()
+                return listOf(ResourceRef(ResourceType.MYSQL, "trade_order", Operation.READ, Confidence.INFERRED, target.name, null))
+            }
+        }
+
+        val result = CallGraphAnalyzer(project, AnalysisOptions(deduplicateResources = true), listOf(extractor))
+            .analyze(EntryPoint(EntryType.METHOD, "test"), method)
+
+        assertEquals(1, result.resources.size)
     }
 
     private fun findClass(name: String) = JavaPsiFacade.getInstance(project)

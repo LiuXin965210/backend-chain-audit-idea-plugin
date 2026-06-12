@@ -39,7 +39,7 @@ class ChainAnalysisService(private val project: Project) {
             publish(it); return
         }
         runBackground("分析 ${entry.displayName}") {
-            val result = CallGraphAnalyzer(project, options, extractors()).analyze(entry, method)
+            val result = CallGraphAnalyzer(project, options, extractors(options)).analyze(entry, method)
             cached = CachedResult(cacheKey, stamp, result)
             result
         }
@@ -63,8 +63,8 @@ class ChainAnalysisService(private val project: Project) {
                     listOf(AnalysisWarning("未找到入口：$label"))
                 )
             } else {
-                val results = entries.map { CallGraphAnalyzer(project, options, extractors()).analyze(it.entry, it.method) }
-                merge(results)
+                val results = entries.map { CallGraphAnalyzer(project, options, extractors(options)).analyze(it.entry, it.method) }
+                merge(results, options)
             }
         }
     }
@@ -108,17 +108,29 @@ class ChainAnalysisService(private val project: Project) {
             statusListeners.forEach { it(status) }
         }
 
-    private fun extractors(): List<ResourceExtractor> = listOf(
-        MyBatisExtractor(), JpaExtractor(), InfrastructureExtractor(), ExternalHttpExtractor()
+    private fun extractors(options: AnalysisOptions): List<ResourceExtractor> = listOf(
+        MyBatisExtractor(), JpaExtractor(), InfrastructureExtractor(),
+        ExternalHttpExtractor(options.customHttpClientClassPrefixes)
     )
 
-    private fun merge(results: List<AnalysisResult>): AnalysisResult {
+    private fun merge(results: List<AnalysisResult>, options: AnalysisOptions): AnalysisResult {
         if (results.size == 1) return results.first()
         val methods = results.flatMap { it.callGraph.methods.values }.associateBy { it.key }
+        val resources = results.flatMap { it.resources }
+        val mergedResources = if (options.deduplicateResources) {
+            resources.distinctBy {
+                when (it.type) {
+                    ResourceType.MYSQL, ResourceType.EXTERNAL_HTTP -> "${it.type}:${it.name}:${it.operation}"
+                    else -> "${it.type}:${it.name}:${it.operation}:${it.detail}"
+                }
+            }
+        } else {
+            resources.distinctBy { "${it.type}:${it.name}:${it.operation}:${it.detail}" }
+        }
         return AnalysisResult(
             EntryPoint(results.first().entry.type, results.joinToString { it.entry.displayName }),
             CallGraph(results.first().callGraph.root, methods, results.flatMap { it.callGraph.edges }),
-            results.flatMap { it.resources }.distinctBy { "${it.type}:${it.name}:${it.operation}" },
+            mergedResources,
             results.flatMap { it.warnings } + AnalysisWarning("同一入口匹配 ${results.size} 个方法，已合并全部候选")
         )
     }

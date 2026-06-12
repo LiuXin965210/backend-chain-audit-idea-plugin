@@ -23,9 +23,20 @@ class CallGraphAnalyzer(
         return AnalysisResult(
             entry,
             CallGraph(root.methodKey(), methods.toMap(), edges.distinctBy { "${it.caller}->${it.callee}:${it.reason}" }),
-            resources.distinctBy { "${it.type}:${it.name}:${it.operation}:${it.detail}" },
+            normalizedResources(),
             warnings.distinct()
         )
+    }
+
+    private fun normalizedResources(): List<ResourceRef> {
+        val withDistinctEvidence = resources.distinctBy { "${it.type}:${it.name}:${it.operation}:${it.detail}" }
+        if (!options.deduplicateResources) return withDistinctEvidence
+        return withDistinctEvidence.distinctBy {
+            when (it.type) {
+                ResourceType.MYSQL, ResourceType.EXTERNAL_HTTP -> "${it.type}:${it.name}:${it.operation}"
+                else -> "${it.type}:${it.name}:${it.operation}:${it.detail}"
+            }
+        }
     }
 
     private fun trace(method: PsiMethod, depth: Int) {

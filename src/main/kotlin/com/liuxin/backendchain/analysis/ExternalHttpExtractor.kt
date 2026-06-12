@@ -1,10 +1,17 @@
 package com.liuxin.backendchain.analysis
 
 import com.intellij.psi.PsiAnnotation
+import com.intellij.psi.PsiExpression
+import com.intellij.psi.PsiField
+import com.intellij.psi.PsiLiteralExpression
+import com.intellij.psi.PsiPolyadicExpression
+import com.intellij.psi.PsiReferenceExpression
 import com.intellij.psi.SmartPointerManager
 import com.liuxin.backendchain.model.*
 
-class ExternalHttpExtractor : ResourceExtractor {
+class ExternalHttpExtractor(
+    private val customHttpClientClassPrefixes: List<String> = listOf("jsh.mgt.lib.http.BasicHttpUtil")
+) : ResourceExtractor {
     private val mappings = listOf("GetMapping", "PostMapping", "PutMapping", "DeleteMapping", "PatchMapping", "RequestMapping")
 
     override fun extract(context: CallContext): List<ResourceRef> {
@@ -25,11 +32,46 @@ class ExternalHttpExtractor : ResourceExtractor {
         }
 
         val owner = clazz.qualifiedName.orEmpty()
-        if (owner.contains("RestTemplate") || owner.contains("WebClient") || owner.contains("OkHttp")) {
-            val url = context.call?.argumentList?.expressions?.firstNotNullOfOrNull(::constantString) ?: "待确认URL"
-            return listOf(resource(target, "$owner.${target.name} $url", if (url == "待确认URL") Confidence.UNRESOLVED else Confidence.INFERRED, "HTTP client"))
+        if (isHttpClient(owner)) {
+            val url = httpUrl(context.call?.argumentList?.expressions?.firstOrNull()) ?: "待确认URL"
+            val httpMethod = httpMethod(target.name)
+            return listOf(
+                resource(
+                    target,
+                    "$httpMethod $url",
+                    if (url == "待确认URL") Confidence.UNRESOLVED else Confidence.INFERRED,
+                    "HTTP client $owner.${target.name}"
+                )
+            )
         }
         return emptyList()
+    }
+
+    private fun isHttpClient(owner: String): Boolean =
+        listOf("RestTemplate", "WebClient", "OkHttp").any(owner::contains) ||
+            customHttpClientClassPrefixes.any { owner.startsWith(it) || owner == it }
+
+    private fun httpMethod(methodName: String): String = when {
+        methodName.startsWith("get", true) -> "GET"
+        methodName.startsWith("post", true) -> "POST"
+        methodName.startsWith("put", true) -> "PUT"
+        methodName.startsWith("delete", true) -> "DELETE"
+        methodName.startsWith("patch", true) -> "PATCH"
+        else -> "未声明"
+    }
+
+    private fun httpUrl(expression: PsiExpression?): String? = when (expression) {
+        null -> null
+        is PsiLiteralExpression -> expression.value as? String
+        is PsiReferenceExpression -> {
+            constantString(expression) ?: (expression.resolve() as? PsiField)?.let { field ->
+                annotationString(field.annotations.firstOrNull {
+                    it.qualifiedName?.endsWith(".Value") == true || it.nameReferenceElement?.referenceName == "Value"
+                }, "value")
+            }
+        }
+        is PsiPolyadicExpression -> expression.operands.mapNotNull(::httpUrl).joinToString("").ifBlank { null }
+        else -> constantString(expression)
     }
 
     private fun mappingMethod(name: String, value: PsiAnnotation): String = when (name) {
