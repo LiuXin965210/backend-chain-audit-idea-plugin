@@ -1,0 +1,38 @@
+<idea-plugin>
+    <id>com.liuxin.backend-chain-audit</id>
+    <name>Backend Chain Audit</name>
+    <vendor>liuxin</vendor>
+    <description><![CDATA[
+        Backend Chain Audit statically analyzes Java and Spring call chains, MySQL tables,
+        Redis keys, RabbitMQ and Kafka resources, and external HTTP interfaces. It keeps
+        source evidence and confidence levels for every discovered candidate.
+    ]]></description>
+
+    <depends>com.intellij.modules.platform</depends>
+    <depends>com.intellij.modules.java</depends>
+    <depends>com.intellij.modules.xml</depends>
+
+    <extensions defaultExtensionNs="com.intellij">
+        <projectService serviceImplementation="com.liuxin.backendchain.analysis.ChainAnalysisService"/>
+        <projectService serviceImplementation="com.liuxin.backendchain.settings.ChainAuditSettings"/>
+        <toolWindow id="Backend Chain Audit"
+                    anchor="bottom"
+                    factoryClass="com.liuxin.backendchain.ui.ChainAuditToolWindowFactory"/>
+    </extensions>
+
+    <actions>
+        <group id="com.liuxin.backendchain.ActionGroup" text="Backend Chain Audit" popup="true">
+            <add-to-group group-id="ToolsMenu" anchor="last"/>
+            <action id="com.liuxin.backendchain.AnalyzeCurrentMethod"
+                    class="com.liuxin.backendchain.action.AnalyzeCurrentMethodAction"
+                    text="分析后端代码链路"
+                    description="分析光标所在方法的调用链和资源">
+                <add-to-group group-id="EditorPopupMenu" anchor="last"/>
+            </action>
+            <action id="com.liuxin.backendchain.AnalyzeByInput"
+                    class="com.liuxin.backendchain.action.AnalyzeByInputAction"
+                    text="按路径或 Topic 分析"
+                    description="输入 HTTP 路径或 MQ topic 定位并分析入口"/>
+        </group>
+    </actions>
+</idea-plugin>
