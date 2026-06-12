@@ -3,12 +3,12 @@ package com.liuxin.backendchain.ui
 import com.intellij.openapi.Disposable
 import com.intellij.openapi.application.ReadAction
 import com.intellij.openapi.components.service
+import com.intellij.openapi.fileEditor.OpenFileDescriptor
 import com.intellij.openapi.fileChooser.FileChooserFactory
 import com.intellij.openapi.fileChooser.FileSaverDescriptor
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.ui.Messages
 import com.intellij.openapi.vfs.LocalFileSystem
-import com.intellij.pom.Navigatable
 import com.intellij.ui.JBSplitter
 import com.intellij.ui.ScrollPaneFactory
 import com.intellij.ui.components.JBLabel
@@ -100,9 +100,13 @@ class ChainAuditPanel(private val project: Project) : JBPanel<ChainAuditPanel>(B
             is ResourceRef -> value.pointer
             else -> null
         }
-        ReadAction.compute<Navigatable?, RuntimeException> {
-            pointer?.element as? Navigatable
-        }?.navigate(true)
+        val target = ReadAction.compute<NavigationTarget?, RuntimeException> {
+            val element = pointer?.element ?: return@compute null
+            val navigationElement = element.navigationElement
+            val file = navigationElement.containingFile?.virtualFile ?: return@compute null
+            NavigationTarget(file, navigationElement.textOffset.coerceAtLeast(0))
+        } ?: return
+        OpenFileDescriptor(project, target.file, target.offset).navigate(true)
     }
 
     private fun export(extension: String) {
@@ -133,6 +137,8 @@ class ChainAuditPanel(private val project: Project) : JBPanel<ChainAuditPanel>(B
     private data class TreeItem(val method: MethodRef, val confidence: Confidence, val reason: String) {
         override fun toString() = "${method.displayName} [${confidence.displayName}：$reason]"
     }
+
+    private data class NavigationTarget(val file: com.intellij.openapi.vfs.VirtualFile, val offset: Int)
 }
 
 private class ResourceTableModel : AbstractTableModel() {
