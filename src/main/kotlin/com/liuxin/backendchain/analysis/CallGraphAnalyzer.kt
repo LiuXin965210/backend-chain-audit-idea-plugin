@@ -38,7 +38,7 @@ class CallGraphAnalyzer(
             return
         }
 
-        collectResources(CallContext(method, null, method, method.text))
+        collectResources(CallContext(method, null, method, method.text ?: ""))
         findMethodCalls(method).forEach { call ->
             ProgressManager.checkCanceled()
             val resolved = call.resolveMethod()
@@ -46,7 +46,7 @@ class CallGraphAnalyzer(
                 warnings += AnalysisWarning("无法解析调用：${call.methodExpression.text}")
                 return@forEach
             }
-            collectResources(CallContext(method, call, resolved, call.text))
+            collectResources(CallContext(method, call, resolved, call.text ?: ""))
             register(resolved)
             edges += edge(method, resolved, Confidence.CONFIRMED, "PSI resolve", call)
 

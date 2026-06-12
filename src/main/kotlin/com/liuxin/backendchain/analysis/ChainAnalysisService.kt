@@ -3,6 +3,8 @@ package com.liuxin.backendchain.analysis
 import com.intellij.openapi.Disposable
 import com.intellij.openapi.application.ReadAction
 import com.intellij.openapi.components.Service
+import com.intellij.openapi.diagnostic.Logger
+import com.intellij.openapi.progress.ProcessCanceledException
 import com.intellij.openapi.progress.ProgressIndicator
 import com.intellij.openapi.progress.Task
 import com.intellij.openapi.project.Project
@@ -16,12 +18,18 @@ import java.util.concurrent.CopyOnWriteArrayList
 @Service(Service.Level.PROJECT)
 class ChainAnalysisService(private val project: Project) {
     private val listeners = CopyOnWriteArrayList<(AnalysisResult) -> Unit>()
+    private val statusListeners = CopyOnWriteArrayList<(AnalysisStatus) -> Unit>()
     @Volatile private var cached: CachedResult? = null
 
     fun subscribe(parent: Disposable, listener: (AnalysisResult) -> Unit) {
         listeners += listener
         Disposer.register(parent) { listeners -= listener }
         cached?.result?.let(listener)
+    }
+
+    fun subscribeStatus(parent: Disposable, listener: (AnalysisStatus) -> Unit) {
+        statusListeners += listener
+        Disposer.register(parent) { statusListeners -= listener }
     }
 
     fun analyzeMethod(method: PsiMethod, entry: EntryPoint = methodEntry(method), options: AnalysisOptions = AnalysisOptions()) {
@@ -62,14 +70,31 @@ class ChainAnalysisService(private val project: Project) {
     }
 
     private fun runBackground(title: String, action: () -> AnalysisResult) {
+        publishStatus(AnalysisStatus("$title，等待 IDEA 索引并开始扫描...", running = true))
         object : Task.Backgroundable(project, title, true) {
             override fun run(indicator: ProgressIndicator) {
-                val result = ReadAction.nonBlocking(action)
-                    .inSmartMode(project)
-                    .expireWith(project)
-                    .submit(AppExecutorUtil.getAppExecutorService())
-                    .get()
-                publish(result)
+                try {
+                    val result = ReadAction.nonBlocking(action)
+                        .inSmartMode(project)
+                        .expireWith(project)
+                        .submit(AppExecutorUtil.getAppExecutorService())
+                        .get()
+                    publishStatus(AnalysisStatus("$title，扫描完成", running = false))
+                    publish(result)
+                } catch (e: ProcessCanceledException) {
+                    publishStatus(AnalysisStatus("$title，扫描已取消", running = false))
+                    throw e
+                } catch (e: Throwable) {
+                    val cause = e.cause ?: e
+                    LOG.warn("Backend chain analysis failed: $title", cause)
+                    publishStatus(
+                        AnalysisStatus(
+                            "$title，扫描失败：${cause.message ?: cause.javaClass.simpleName}",
+                            running = false,
+                            error = true
+                        )
+                    )
+                }
             }
         }.queue()
     }
@@ -77,6 +102,11 @@ class ChainAnalysisService(private val project: Project) {
     private fun publish(result: AnalysisResult) = com.intellij.openapi.application.ApplicationManager.getApplication().invokeLater {
         listeners.forEach { it(result) }
     }
+
+    private fun publishStatus(status: AnalysisStatus) =
+        com.intellij.openapi.application.ApplicationManager.getApplication().invokeLater {
+            statusListeners.forEach { it(status) }
+        }
 
     private fun extractors(): List<ResourceExtractor> = listOf(
         MyBatisExtractor(), JpaExtractor(), InfrastructureExtractor(), ExternalHttpExtractor()
@@ -96,6 +126,8 @@ class ChainAnalysisService(private val project: Project) {
     private data class CachedResult(val key: String, val modificationCount: Long, val result: AnalysisResult)
 
     companion object {
+        private val LOG = Logger.getInstance(ChainAnalysisService::class.java)
+
         fun methodEntry(method: PsiMethod) = EntryPoint(EntryType.METHOD, "${method.ownerName()}.${method.name}")
     }
 }

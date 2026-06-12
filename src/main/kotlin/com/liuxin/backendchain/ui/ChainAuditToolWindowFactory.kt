@@ -13,7 +13,9 @@ class ChainAuditToolWindowFactory : ToolWindowFactory, DumbAware {
     override fun createToolWindowContent(project: Project, toolWindow: ToolWindow) {
         val panel = ChainAuditPanel(project)
         toolWindow.contentManager.addContent(ContentFactory.getInstance().createContent(panel, "扫描结果", false))
-        project.service<ChainAnalysisService>().subscribe(panel) { panel.showResult(it) }
+        val service = project.service<ChainAnalysisService>()
+        service.subscribe(panel) { panel.showResult(it) }
+        service.subscribeStatus(panel) { panel.showStatus(it) }
     }
 
     companion object {

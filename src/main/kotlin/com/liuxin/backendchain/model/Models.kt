@@ -65,6 +65,12 @@ data class ResourceRef(
 
 data class AnalysisWarning(val message: String)
 
+data class AnalysisStatus(
+    val message: String,
+    val running: Boolean,
+    val error: Boolean = false
+)
+
 data class AnalysisResult(
     val entry: EntryPoint,
     val callGraph: CallGraph,

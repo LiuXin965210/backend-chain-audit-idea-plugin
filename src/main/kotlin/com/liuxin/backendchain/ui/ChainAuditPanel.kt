@@ -1,6 +1,7 @@
 package com.liuxin.backendchain.ui
 
 import com.intellij.openapi.Disposable
+import com.intellij.openapi.application.ReadAction
 import com.intellij.openapi.components.service
 import com.intellij.openapi.fileChooser.FileChooserFactory
 import com.intellij.openapi.fileChooser.FileSaverDescriptor
@@ -58,6 +59,11 @@ class ChainAuditPanel(private val project: Project) : JBPanel<ChainAuditPanel>(B
         if (result.warnings.isNotEmpty()) treeRoot().add(DefaultMutableTreeNode("提示：${result.warnings.joinToString { it.message }}"))
     }
 
+    fun showStatus(status: AnalysisStatus) {
+        title.text = status.message
+        title.toolTipText = if (status.error) "请查看 IDEA 日志中的 Backend Chain Audit 异常" else null
+    }
+
     private fun buildTree(result: AnalysisResult): DefaultMutableTreeNode {
         val rootRef = result.callGraph.methods[result.callGraph.root]
         val root = DefaultMutableTreeNode(rootRef ?: result.entry.displayName)
@@ -94,7 +100,9 @@ class ChainAuditPanel(private val project: Project) : JBPanel<ChainAuditPanel>(B
             is ResourceRef -> value.pointer
             else -> null
         }
-        (pointer?.element as? Navigatable)?.navigate(true)
+        ReadAction.compute<Navigatable?, RuntimeException> {
+            pointer?.element as? Navigatable
+        }?.navigate(true)
     }
 
     private fun export(extension: String) {
