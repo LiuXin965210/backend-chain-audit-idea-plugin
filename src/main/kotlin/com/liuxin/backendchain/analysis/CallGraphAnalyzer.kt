@@ -49,22 +49,41 @@ class CallGraphAnalyzer(
             collectResources(CallContext(method, call, resolved, call.text ?: ""))
             register(resolved)
             edges += edge(method, resolved, Confidence.CONFIRMED, "PSI resolve", call)
+            traceDispatchTargets(resolved, call, call, depth)
+        }
 
-            val implementations = resolveImplementations(project, resolved, call)
-            if (implementations.size > 1) {
-                implementations.forEach { implementation ->
-                    register(implementation)
-                    edges += edge(resolved, implementation, Confidence.INFERRED, "接口存在多个实现", call)
-                    if (shouldExpand(implementation)) trace(implementation, depth + 1)
-                }
-            } else {
-                val target = implementations.singleOrNull() ?: resolved
-                if (target != resolved) {
-                    register(target)
-                    edges += edge(resolved, target, Confidence.INFERRED, "唯一实现类", call)
-                }
-                if (shouldExpand(target)) trace(target, depth + 1)
+        findMethodReferences(method).forEach { reference ->
+            ProgressManager.checkCanceled()
+            val resolved = reference.resolve() as? PsiMethod
+            if (resolved == null) {
+                warnings += AnalysisWarning("无法解析方法引用：${reference.text}")
+                return@forEach
             }
+            register(resolved)
+            edges += edge(method, resolved, Confidence.CONFIRMED, "PSI 方法引用 resolve", reference)
+            traceDispatchTargets(resolved, null, reference, depth)
+        }
+    }
+
+    private fun traceDispatchTargets(
+        resolved: PsiMethod,
+        call: com.intellij.psi.PsiMethodCallExpression?,
+        source: com.intellij.psi.PsiElement,
+        depth: Int
+    ) {
+        val targets = resolveImplementations(project, resolved, call).ifEmpty { listOf(resolved) }
+        val alternatives = targets.filter { it.methodKey() != resolved.methodKey() }
+        alternatives.forEach { implementation ->
+            register(implementation)
+            val reason = if (resolved.containingClass?.isInterface == true || resolved.hasModifierProperty(com.intellij.psi.PsiModifier.ABSTRACT)) {
+                if (targets.size == 1) "唯一实现类" else "接口存在多个实现"
+            } else {
+                "运行时可能调用覆写方法"
+            }
+            edges += edge(resolved, implementation, Confidence.INFERRED, reason, source)
+        }
+        targets.distinctBy { it.methodKey() }.forEach { target ->
+            if (shouldExpand(target)) trace(target, depth + 1)
         }
     }
 

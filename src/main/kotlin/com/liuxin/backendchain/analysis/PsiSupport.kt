@@ -22,9 +22,22 @@ internal fun PsiMethod.isProjectSource(project: Project): Boolean {
 internal fun findMethodCalls(method: PsiMethod): Collection<PsiMethodCallExpression> =
     PsiTreeUtil.findChildrenOfType(method.body, PsiMethodCallExpression::class.java)
 
+internal fun findMethodReferences(method: PsiMethod): Collection<PsiMethodReferenceExpression> =
+    PsiTreeUtil.findChildrenOfType(method.body, PsiMethodReferenceExpression::class.java)
+
 internal fun resolveImplementations(project: Project, method: PsiMethod, call: PsiMethodCallExpression? = null): List<PsiMethod> {
     val owner = method.containingClass ?: return emptyList()
-    if (!owner.isInterface && !method.hasModifierProperty(PsiModifier.ABSTRACT)) return listOf(method)
+    if (!owner.isInterface && !method.hasModifierProperty(PsiModifier.ABSTRACT)) {
+        if (!isVirtual(method)) return listOf(method)
+        val overrides = ClassInheritorsSearch.search(owner, GlobalSearchScope.projectScope(project), true)
+            .findAll()
+            .flatMap { inheritor ->
+                inheritor.findMethodsByName(method.name, false)
+                    .filter { it.hierarchicalMethodSignature.superSignatures.any { signature -> signature.method == method } }
+            }
+            .distinctBy { it.methodKey() }
+        return listOf(method) + overrides
+    }
     val implementations = ClassInheritorsSearch.search(owner, GlobalSearchScope.projectScope(project), true)
         .findAll()
         .flatMap { inheritor ->
@@ -46,6 +59,13 @@ internal fun resolveImplementations(project: Project, method: PsiMethod, call: P
     implementations.filter { annotation(it.containingClass, "Primary") != null }.takeIf { it.size == 1 }?.let { return it }
     return implementations
 }
+
+private fun isVirtual(method: PsiMethod): Boolean =
+    !method.isConstructor &&
+        !method.hasModifierProperty(PsiModifier.PRIVATE) &&
+        !method.hasModifierProperty(PsiModifier.STATIC) &&
+        !method.hasModifierProperty(PsiModifier.FINAL) &&
+        method.containingClass?.hasModifierProperty(PsiModifier.FINAL) != true
 
 private fun beanName(clazz: PsiClass?): String? {
     clazz ?: return null

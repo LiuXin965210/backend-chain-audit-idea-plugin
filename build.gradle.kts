@@ -22,7 +22,7 @@ dependencies {
         exclude(group = "org.openjdk.jmh", module = "jmh-core")
     }
     testImplementation(kotlin("test"))
-    testRuntimeOnly("junit:junit:4.13.2")
+    testImplementation("junit:junit:4.13.2")
 
     intellijPlatform {
         local("/Applications/IntelliJ IDEA.app")
