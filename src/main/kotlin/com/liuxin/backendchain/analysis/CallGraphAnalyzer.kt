@@ -47,6 +47,7 @@ class CallGraphAnalyzer(
                 return@forEach
             }
             collectResources(CallContext(method, call, resolved, call.text ?: ""))
+            if (isExcluded(resolved)) return@forEach
             register(resolved)
             edges += edge(method, resolved, Confidence.CONFIRMED, "PSI resolve", call)
             traceDispatchTargets(resolved, call, call, depth)
@@ -59,6 +60,7 @@ class CallGraphAnalyzer(
                 warnings += AnalysisWarning("无法解析方法引用：${reference.text}")
                 return@forEach
             }
+            if (isExcluded(resolved)) return@forEach
             register(resolved)
             edges += edge(method, resolved, Confidence.CONFIRMED, "PSI 方法引用 resolve", reference)
             traceDispatchTargets(resolved, null, reference, depth)
@@ -114,9 +116,11 @@ class CallGraphAnalyzer(
     }
 
     private fun shouldExpand(method: PsiMethod): Boolean {
-        val owner = method.ownerName()
-        return method.isProjectSource(project) && options.excludedPackagePrefixes.none(owner::startsWith)
+        return method.isProjectSource(project) && !isExcluded(method)
     }
+
+    private fun isExcluded(method: PsiMethod): Boolean =
+        options.excludedPackagePrefixes.any(method.ownerName()::startsWith)
 
     private fun register(method: PsiMethod) {
         val key = method.methodKey()

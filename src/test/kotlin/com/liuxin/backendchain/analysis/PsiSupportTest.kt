@@ -50,6 +50,28 @@ class PsiSupportTest : BasePlatformTestCase() {
         assertTrue(targets.none { it.containingClass?.name == "PlainService" })
     }
 
+    fun testExcludedJdkCallsAreNotAddedToGraph() {
+        myFixture.configureByText(
+            "AuditService.java",
+            """
+                class AuditService {
+                    void run(java.util.List<String> values) {
+                        values.isEmpty();
+                        save();
+                    }
+                    void save() {}
+                }
+            """.trimIndent()
+        )
+
+        val method = findClass("AuditService").findMethodsByName("run", false).single()
+        val result = CallGraphAnalyzer(project, com.liuxin.backendchain.model.AnalysisOptions(), emptyList())
+            .analyze(com.liuxin.backendchain.model.EntryPoint(com.liuxin.backendchain.model.EntryType.METHOD, "test"), method)
+
+        assertTrue(result.callGraph.methods.values.none { it.className.startsWith("java.") })
+        assertTrue(result.callGraph.methods.values.any { it.methodName == "save" })
+    }
+
     private fun findClass(name: String) = JavaPsiFacade.getInstance(project)
         .findClass(name, GlobalSearchScope.projectScope(project))
         ?: error("Class not found: $name")

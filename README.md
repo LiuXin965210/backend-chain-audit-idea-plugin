@@ -2,7 +2,7 @@
 
 IntelliJ IDEA 内部插件，从 Java/Spring 方法、HTTP 路径或 MQ topic 出发，静态分析调用链及其涉及的 MySQL、Redis、RabbitMQ、Kafka 和外围 HTTP 接口。
 
-当前版本：`0.1.3`
+当前版本：`0.1.4`
 
 ## 构建
 
