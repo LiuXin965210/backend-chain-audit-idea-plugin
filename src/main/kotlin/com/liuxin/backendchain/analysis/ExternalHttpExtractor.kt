@@ -21,7 +21,7 @@ class ExternalHttpExtractor(
         if (feign != null) {
             val mapping = mappings.firstNotNullOfOrNull { name -> annotation(target, name)?.let { name to it } }
                 ?: return emptyList()
-            val service = annotationString(feign, "name", "value", "url") ?: "待确认服务"
+            val service = declaredAnnotationString(feign, "name", "value", "url") ?: "待确认服务"
             val base = annotationString(feign, "path")
             val classPath = annotationString(annotation(clazz, "RequestMapping"), "path", "value")
             val methodPath = annotationString(mapping.second, "path", "value")
@@ -78,6 +78,11 @@ class ExternalHttpExtractor(
         "GetMapping" -> "GET"; "PostMapping" -> "POST"; "PutMapping" -> "PUT"; "DeleteMapping" -> "DELETE"; "PatchMapping" -> "PATCH"
         else -> Regex("RequestMethod\\.([A-Z]+)").find(value.text)?.groupValues?.get(1) ?: "未声明"
     }
+
+    private fun declaredAnnotationString(annotation: PsiAnnotation, vararg names: String): String? =
+        names.firstNotNullOfOrNull { name ->
+            annotation.findDeclaredAttributeValue(name)?.let(::constantString)?.takeIf(String::isNotBlank)
+        }
 
     private fun resource(target: com.intellij.psi.PsiMethod, name: String, confidence: Confidence, detail: String) = ResourceRef(
         ResourceType.EXTERNAL_HTTP, name, Operation.CALL, confidence, detail,

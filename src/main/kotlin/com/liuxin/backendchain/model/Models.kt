@@ -16,6 +16,7 @@ enum class ResourceType(val displayName: String) {
     REDIS("Redis"),
     RABBITMQ("RabbitMQ"),
     KAFKA("Kafka"),
+    ROCKETMQ("RocketMQ"),
     EXTERNAL_HTTP("外围接口")
 }
 
@@ -83,5 +84,8 @@ data class AnalysisOptions(
     val excludedPackagePrefixes: List<String> = listOf("java.", "javax.", "jakarta.", "kotlin.", "org.springframework."),
     val followLocalMqConsumers: Boolean = true,
     val deduplicateResources: Boolean = false,
-    val customHttpClientClassPrefixes: List<String> = listOf("jsh.mgt.lib.http.BasicHttpUtil")
+    val hideSimpleAccessors: Boolean = true,
+    val customHttpClientClassPrefixes: List<String> = listOf("jsh.mgt.lib.http.BasicHttpUtil"),
+    val customMqProducerAnnotations: List<String> = listOf("JshRabbitProducer"),
+    val customMqConsumerAnnotations: List<String> = listOf("JshRabbitConsumer")
 )

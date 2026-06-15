@@ -11,7 +11,10 @@ class ChainAuditSettings : PersistentStateComponent<ChainAuditSettings.State> {
         var excludedPackages: String = "java.,javax.,jakarta.,kotlin.,org.springframework.",
         var followLocalMqConsumers: Boolean = true,
         var deduplicateResources: Boolean = false,
+        var hideSimpleAccessors: Boolean = true,
         var customHttpClientClasses: String = "jsh.mgt.lib.http.BasicHttpUtil",
+        var customMqProducerAnnotations: String = "JshRabbitProducer",
+        var customMqConsumerAnnotations: String = "JshRabbitConsumer",
         var localServiceDirectories: String = ""
     )
 
@@ -24,7 +27,12 @@ class ChainAuditSettings : PersistentStateComponent<ChainAuditSettings.State> {
         excludedPackagePrefixes = state.excludedPackages.split(',', '\n', '\r').map(String::trim).filter(String::isNotEmpty),
         followLocalMqConsumers = state.followLocalMqConsumers,
         deduplicateResources = state.deduplicateResources,
+        hideSimpleAccessors = state.hideSimpleAccessors,
         customHttpClientClassPrefixes = state.customHttpClientClasses.split(',', '\n', '\r')
+            .map(String::trim).filter(String::isNotEmpty),
+        customMqProducerAnnotations = state.customMqProducerAnnotations.split(',', '\n', '\r')
+            .map(String::trim).filter(String::isNotEmpty),
+        customMqConsumerAnnotations = state.customMqConsumerAnnotations.split(',', '\n', '\r')
             .map(String::trim).filter(String::isNotEmpty)
     )
 }
