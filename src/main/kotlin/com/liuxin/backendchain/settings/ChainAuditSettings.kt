@@ -9,6 +9,7 @@ class ChainAuditSettings : PersistentStateComponent<ChainAuditSettings.State> {
     data class State(
         var maxDepth: Int = 30,
         var excludedPackages: String = "java.,javax.,jakarta.,kotlin.,org.springframework.",
+        var onlyProjectSource: Boolean = false,
         var followLocalMqConsumers: Boolean = true,
         var deduplicateResources: Boolean = false,
         var hideSimpleAccessors: Boolean = true,
@@ -25,6 +26,7 @@ class ChainAuditSettings : PersistentStateComponent<ChainAuditSettings.State> {
     fun options() = AnalysisOptions(
         maxDepth = state.maxDepth.coerceIn(1, 100),
         excludedPackagePrefixes = state.excludedPackages.split(',', '\n', '\r').map(String::trim).filter(String::isNotEmpty),
+        onlyProjectSource = state.onlyProjectSource,
         followLocalMqConsumers = state.followLocalMqConsumers,
         deduplicateResources = state.deduplicateResources,
         hideSimpleAccessors = state.hideSimpleAccessors,

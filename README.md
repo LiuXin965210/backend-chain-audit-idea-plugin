@@ -2,7 +2,7 @@
 
 IntelliJ IDEA 内部插件，从 Java/Spring 方法、HTTP 路径或 MQ topic 出发，静态分析调用链及其涉及的 MySQL、Redis、RabbitMQ、Kafka、RocketMQ 和外围 HTTP 接口。
 
-当前版本：`0.2.4`
+当前版本：`0.2.5`
 
 ## 为什么使用 IDEA 插件扫描
 
@@ -100,6 +100,7 @@ Kotlin 入口使用 [UAST](https://plugins.jetbrains.com/docs/intellij/uast.html
 ## 配置
 
 - **最大方法递归深度**：限制递归层数，防止超大调用图持续扩张。
+- **调用链仅展示当前工程源码方法**：隐藏 Maven/Gradle 依赖和第三方工具包方法，只保留 IDEA 当前 Project 源码目录中的方法；资源仍从工程内调用点识别。
 - **过滤包前缀**：匹配的方法不会展示、统计或导出，例如 `java.`、`org.slf4j.`。
 - **沿本地 MQ 继续扫描**：根据 RabbitMQ、Kafka、RocketMQ 的生产 topic/queue 查找当前 IDEA Project 内的消费者。
 - **资源去重**：对全部资源类型按“类型 + 名称 + 操作”去重，并合并证据。

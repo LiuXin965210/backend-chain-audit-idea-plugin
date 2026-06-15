@@ -17,6 +17,7 @@ import javax.swing.SpinnerNumberModel
 
 class ChainAuditConfigurable(private val project: Project) : Configurable {
     private val maxDepth = JSpinner(SpinnerNumberModel(30, 1, 100, 1))
+    private val onlyProjectSource = JBCheckBox("调用链仅展示当前工程源码方法")
     private val excludedPackages = JBTextArea(7, 48).apply {
         lineWrap = true
         wrapStyleWord = true
@@ -49,6 +50,8 @@ class ChainAuditConfigurable(private val project: Project) : Configurable {
         reset()
         return FormBuilder.createFormBuilder()
             .addLabeledComponent(JBLabel("最大方法递归深度："), maxDepth)
+            .addComponent(onlyProjectSource)
+            .addComponent(JBLabel("开启后隐藏依赖库和第三方工具包方法，例如仅保留 com.haier.jsh.order 等工程源码。"))
             .addLabeledComponent(JBLabel("过滤包前缀："), JScrollPane(excludedPackages))
             .addComponent(JBLabel("匹配前缀的方法不会展示、统计或导出；每行或逗号分隔一个前缀。"))
             .addComponent(followMq)
@@ -68,6 +71,7 @@ class ChainAuditConfigurable(private val project: Project) : Configurable {
     override fun isModified(): Boolean {
         val state = project.service<ChainAuditSettings>().state
         return maxDepth.value != state.maxDepth ||
+            onlyProjectSource.isSelected != state.onlyProjectSource ||
             normalizedPrefixes(excludedPackages.text) != normalizedPrefixes(state.excludedPackages) ||
             followMq.isSelected != state.followLocalMqConsumers ||
             deduplicateResources.isSelected != state.deduplicateResources ||
@@ -81,6 +85,7 @@ class ChainAuditConfigurable(private val project: Project) : Configurable {
     override fun apply() {
         val state = project.service<ChainAuditSettings>().state
         state.maxDepth = maxDepth.value as Int
+        state.onlyProjectSource = onlyProjectSource.isSelected
         state.excludedPackages = normalizedPrefixes(excludedPackages.text).joinToString(",")
         state.followLocalMqConsumers = followMq.isSelected
         state.deduplicateResources = deduplicateResources.isSelected
@@ -94,6 +99,7 @@ class ChainAuditConfigurable(private val project: Project) : Configurable {
     override fun reset() {
         val state = project.service<ChainAuditSettings>().state
         maxDepth.value = state.maxDepth.coerceIn(1, 100)
+        onlyProjectSource.isSelected = state.onlyProjectSource
         excludedPackages.text = normalizedPrefixes(state.excludedPackages).joinToString("\n")
         followMq.isSelected = state.followLocalMqConsumers
         deduplicateResources.isSelected = state.deduplicateResources

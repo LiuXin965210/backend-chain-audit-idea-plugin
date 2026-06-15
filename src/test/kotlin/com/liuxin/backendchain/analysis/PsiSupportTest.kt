@@ -82,6 +82,32 @@ class PsiSupportTest : BasePlatformTestCase() {
         assertTrue(result.callGraph.methods.values.any { it.methodName == "save" })
     }
 
+    fun testOnlyProjectSourceHidesDependencyMethodsFromGraph() {
+        myFixture.configureByText(
+            "ProjectOnlyService.java",
+            """
+                package com.haier.jsh.order;
+                class ProjectOnlyService {
+                    void run(java.util.List<String> values) {
+                        values.isEmpty();
+                        save();
+                    }
+                    void save() {}
+                }
+            """.trimIndent()
+        )
+
+        val method = findClass("com.haier.jsh.order.ProjectOnlyService").findMethodsByName("run", false).single()
+        val result = CallGraphAnalyzer(
+            project,
+            AnalysisOptions(excludedPackagePrefixes = emptyList(), onlyProjectSource = true),
+            emptyList()
+        ).analyze(EntryPoint(EntryType.METHOD, "test"), method)
+
+        assertTrue(result.callGraph.methods.values.none { it.className.startsWith("java.") })
+        assertTrue(result.callGraph.methods.values.any { it.className == "com.haier.jsh.order.ProjectOnlyService" && it.methodName == "save" })
+    }
+
     fun testFindsInterfaceImplementationBySuperMethod() {
         myFixture.configureByText(
             "ReplenishService.java",

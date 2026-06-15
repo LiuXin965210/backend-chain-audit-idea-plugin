@@ -82,6 +82,7 @@ data class AnalysisResult(
 data class AnalysisOptions(
     val maxDepth: Int = 30,
     val excludedPackagePrefixes: List<String> = listOf("java.", "javax.", "jakarta.", "kotlin.", "org.springframework."),
+    val onlyProjectSource: Boolean = false,
     val followLocalMqConsumers: Boolean = true,
     val deduplicateResources: Boolean = false,
     val hideSimpleAccessors: Boolean = true,
