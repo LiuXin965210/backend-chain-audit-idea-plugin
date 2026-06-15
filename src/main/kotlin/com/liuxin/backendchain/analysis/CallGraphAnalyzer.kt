@@ -18,7 +18,7 @@ class CallGraphAnalyzer(
     private val expanded = mutableSetOf<String>()
 
     fun analyze(entry: EntryPoint, root: PsiMethod): AnalysisResult {
-        trace(root, 0)
+        trace(root, 0, TracePath(listOf(root.ownerName() + "." + root.name)))
         if (options.followLocalMqConsumers) followMqConsumers(root.methodKey())
         return AnalysisResult(
             entry,
@@ -29,17 +29,10 @@ class CallGraphAnalyzer(
     }
 
     private fun normalizedResources(): List<ResourceRef> {
-        val withDistinctEvidence = resources.distinctBy { "${it.type}:${it.name}:${it.operation}:${it.detail}" }
-        if (!options.deduplicateResources) return withDistinctEvidence
-        return withDistinctEvidence.distinctBy {
-            when (it.type) {
-                ResourceType.MYSQL, ResourceType.EXTERNAL_HTTP -> "${it.type}:${it.name}:${it.operation}"
-                else -> "${it.type}:${it.name}:${it.operation}:${it.detail}"
-            }
-        }
+        return ResourceDeduplicator.normalize(resources, options.deduplicateResources)
     }
 
-    private fun trace(method: PsiMethod, depth: Int) {
+    private fun trace(method: PsiMethod, depth: Int, path: TracePath) {
         ProgressManager.checkCanceled()
         register(method)
         val key = method.methodKey()
@@ -49,7 +42,7 @@ class CallGraphAnalyzer(
             return
         }
 
-        collectResources(CallContext(method, null, method, method.text ?: ""))
+        collectResources(CallContext(method, null, method, method.text ?: ""), path)
         findMethodCalls(method).forEach { call ->
             ProgressManager.checkCanceled()
             val resolved = call.resolveMethod()
@@ -57,11 +50,12 @@ class CallGraphAnalyzer(
                 warnings += AnalysisWarning("无法解析调用：${call.methodExpression.text}")
                 return@forEach
             }
-            collectResources(CallContext(method, call, resolved, call.text ?: ""))
+            collectResources(CallContext(method, call, resolved, call.text ?: ""), path.append(resolved))
             if (isExcluded(resolved)) return@forEach
+            if (options.hideSimpleAccessors && resolved.isSimpleAccessor()) return@forEach
             register(resolved)
             edges += edge(method, resolved, Confidence.CONFIRMED, "PSI resolve", call)
-            traceDispatchTargets(resolved, call, call, depth)
+            traceDispatchTargets(resolved, call, call, depth, path)
         }
 
         findMethodReferences(method).forEach { reference ->
@@ -72,9 +66,10 @@ class CallGraphAnalyzer(
                 return@forEach
             }
             if (isExcluded(resolved)) return@forEach
+            if (options.hideSimpleAccessors && resolved.isSimpleAccessor()) return@forEach
             register(resolved)
             edges += edge(method, resolved, Confidence.CONFIRMED, "PSI 方法引用 resolve", reference)
-            traceDispatchTargets(resolved, null, reference, depth)
+            traceDispatchTargets(resolved, null, reference, depth, path)
         }
     }
 
@@ -82,7 +77,8 @@ class CallGraphAnalyzer(
         resolved: PsiMethod,
         call: com.intellij.psi.PsiMethodCallExpression?,
         source: com.intellij.psi.PsiElement,
-        depth: Int
+        depth: Int,
+        path: TracePath
     ) {
         val targets = resolveImplementations(project, resolved, call).ifEmpty { listOf(resolved) }
         val alternatives = targets.filter { it.methodKey() != resolved.methodKey() }
@@ -96,30 +92,45 @@ class CallGraphAnalyzer(
             edges += edge(resolved, implementation, Confidence.INFERRED, reason, source)
         }
         targets.distinctBy { it.methodKey() }.forEach { target ->
-            if (shouldExpand(target)) trace(target, depth + 1)
+            if (shouldExpand(target)) {
+                val inferredDispatch = target.methodKey() != resolved.methodKey()
+                trace(target, depth + 1, path.append(target, inferredDispatch))
+            }
         }
     }
 
     private fun followMqConsumers(rootKey: String) {
-        val topics = resources.filter { it.operation == Operation.PRODUCE && it.type in setOf(ResourceType.KAFKA, ResourceType.RABBITMQ) }
+        val topics = resources.filter {
+            it.operation == Operation.PRODUCE &&
+                it.type in setOf(ResourceType.KAFKA, ResourceType.RABBITMQ, ResourceType.ROCKETMQ)
+        }
             .map { it.name }.distinct()
-        val locator = EntryPointLocator(project)
+        val locator = EntryPointLocator(
+            project,
+            options.customMqProducerAnnotations,
+            options.customMqConsumerAnnotations
+        )
         topics.forEach { topic ->
             locator.byMqTopic(topic).forEach { located ->
                 val consumer = located.method
                 if (consumer.methodKey() !in methods) {
                     register(consumer)
                     edges += CallEdge(rootKey, consumer.methodKey(), Confidence.INFERRED, "本地 MQ 消费者：$topic", pointer(consumer))
-                    trace(consumer, 1)
+                    trace(consumer, 1, TracePath(listOf(methods[rootKey]?.displayName ?: rootKey)).append(consumer, true))
                 }
             }
         }
     }
 
-    private fun collectResources(context: CallContext) {
+    private fun collectResources(context: CallContext, path: TracePath) {
         extractors.filter { it.supports(context) }.forEach { extractor ->
             try {
-                resources += extractor.extract(context)
+                resources += extractor.extract(context).map { resource ->
+                    resource.copy(
+                        confidence = lessCertain(resource.confidence, path.confidence),
+                        detail = "调用路径：${path.display()}；原始证据：${resource.detail}"
+                    )
+                }
             } catch (e: Exception) {
                 warnings += AnalysisWarning("${extractor.javaClass.simpleName} 解析失败：${e.message ?: e.javaClass.simpleName}")
             }
@@ -143,4 +154,23 @@ class CallGraphAnalyzer(
 
     private fun pointer(element: com.intellij.psi.PsiElement) =
         SmartPointerManager.getInstance(project).createSmartPsiElementPointer(element)
+
+    private fun lessCertain(left: Confidence, right: Confidence): Confidence =
+        if (left.ordinal >= right.ordinal) left else right
+
+    private data class TracePath(
+        val methods: List<String>,
+        val confidence: Confidence = Confidence.CONFIRMED
+    ) {
+        fun append(method: PsiMethod, inferred: Boolean = false): TracePath {
+            val name = method.ownerName() + "." + method.name + if (inferred) " [推断分支]" else ""
+            val nextConfidence = if (inferred) Confidence.INFERRED else confidence
+            return TracePath(methods + name, if (confidence.ordinal >= nextConfidence.ordinal) confidence else nextConfidence)
+        }
+
+        fun display(): String {
+            val visible = if (methods.size <= 8) methods else listOf(methods.first(), "...") + methods.takeLast(6)
+            return visible.joinToString(" -> ")
+        }
+    }
 }

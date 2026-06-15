@@ -14,7 +14,27 @@ object ResultExporter {
             appendLine("|---|---|---|---|---|---|---|---|---|---|---|---|")
             val status = if (result.resources.any { it.confidence == Confidence.UNRESOLVED }) "待确认" else "已完成"
             val summary = result.callGraph.methods.values.take(8).joinToString(" -> ") { it.displayName }
-            appendLine("| ${result.entry.type} | `${result.entry.displayName}` | $status | $summary | 写入：$writes<br>只读：$reads | ${cell(ResourceType.REDIS)} | 无 | 无 | ${cell(ResourceType.KAFKA)} | ${cell(ResourceType.RABBITMQ)} | 无 | ${cell(ResourceType.EXTERNAL_HTTP)} |")
+            appendLine("| ${result.entry.type} | `${result.entry.displayName}` | $status | $summary | 写入：$writes<br>只读：$reads | ${cell(ResourceType.REDIS)} | 无 | 无 | ${cell(ResourceType.KAFKA)} | ${cell(ResourceType.RABBITMQ)} | ${cell(ResourceType.ROCKETMQ)} | ${cell(ResourceType.EXTERNAL_HTTP)} |")
+        }
+    }
+
+    fun csv(result: AnalysisResult): String = buildString {
+        append('\uFEFF')
+        appendLine(csvRow(listOf("入口类型", "入口", "资源类型", "资源名称", "操作", "置信度", "调用路径与证据")))
+        result.resources.forEach { resource ->
+            appendLine(
+                csvRow(
+                    listOf(
+                        result.entry.type.name,
+                        result.entry.displayName,
+                        resource.type.displayName,
+                        resource.name,
+                        resource.operation.displayName,
+                        resource.confidence.displayName,
+                        resource.detail
+                    )
+                )
+            )
         }
     }
 
@@ -35,4 +55,7 @@ object ResultExporter {
 
     private fun id(value: String) = "n" + value.hashCode().toUInt().toString(16)
     private fun escape(value: String) = value.replace("\\", "\\\\").replace("\"", "\\\"")
+    private fun csvRow(values: List<String>) = values.joinToString(",") { value ->
+        "\"${value.replace("\"", "\"\"")}\""
+    }
 }

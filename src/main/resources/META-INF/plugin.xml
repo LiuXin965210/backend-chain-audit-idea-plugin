@@ -4,7 +4,7 @@
     <vendor>liuxin</vendor>
     <description><![CDATA[
         Backend Chain Audit statically analyzes Java and Spring call chains, MySQL tables,
-        Redis keys, RabbitMQ and Kafka resources, and external HTTP interfaces. It keeps
+        Redis keys, RabbitMQ, Kafka and RocketMQ resources, and external HTTP interfaces. It keeps
         source evidence and confidence levels for every discovered candidate.
     ]]></description>
 
@@ -29,7 +29,7 @@
             <add-to-group group-id="ToolsMenu" anchor="last"/>
             <action id="com.liuxin.backendchain.AnalyzeCurrentMethod"
                     class="com.liuxin.backendchain.action.AnalyzeCurrentMethodAction"
-                    text="分析后端代码链路"
+                    text="分析链路"
                     description="分析光标所在方法的调用链和资源">
                 <add-to-group group-id="EditorPopupMenu" anchor="last"/>
             </action>

@@ -32,7 +32,14 @@ class ChainAuditPanel(private val project: Project) : JBPanel<ChainAuditPanel>(B
     private val title = JBLabel("尚未执行扫描")
     private val tree = JTree(DefaultMutableTreeNode("调用链"))
     private val tableModel = ResourceTableModel()
-    private val table = JBTable(tableModel)
+    private val table = object : JBTable(tableModel) {
+        override fun getToolTipText(event: MouseEvent): String? {
+            val row = rowAtPoint(event.point)
+            val column = columnAtPoint(event.point)
+            if (row < 0 || column < 0) return null
+            return getValueAt(row, column)?.toString()
+        }
+    }
     private val tableSorter = TableRowSorter(tableModel)
     private val typeFilter = JComboBox(arrayOf("全部类型") + ResourceType.entries.map { it.displayName }.toTypedArray())
     private val resourceFilter = JTextField(18)
@@ -46,6 +53,7 @@ class ChainAuditPanel(private val project: Project) : JBPanel<ChainAuditPanel>(B
             add(Box.createHorizontalGlue())
             add(JButton("设置").apply { addActionListener { openSettings() } })
             add(JButton("导出 Markdown").apply { addActionListener { export("md") } })
+            add(JButton("导出 CSV").apply { addActionListener { export("csv") } })
             add(JButton("导出 Mermaid").apply { addActionListener { export("mmd") } })
         }
         table.rowSorter = tableSorter
@@ -138,7 +146,11 @@ class ChainAuditPanel(private val project: Project) : JBPanel<ChainAuditPanel>(B
         val projectDir = project.basePath?.let { LocalFileSystem.getInstance().findFileByPath(it) }
         val wrapper = FileChooserFactory.getInstance().createSaveFileDialog(descriptor, this)
             .save(projectDir, "backend-chain-audit.$extension") ?: return
-        val text = if (extension == "md") ResultExporter.markdown(current) else ResultExporter.mermaid(current)
+        val text = when (extension) {
+            "md" -> ResultExporter.markdown(current)
+            "csv" -> ResultExporter.csv(current)
+            else -> ResultExporter.mermaid(current)
+        }
         wrapper.file.writeText(text)
     }
 

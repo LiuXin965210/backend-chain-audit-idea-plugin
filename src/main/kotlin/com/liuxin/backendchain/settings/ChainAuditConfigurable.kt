@@ -22,12 +22,23 @@ class ChainAuditConfigurable(private val project: Project) : Configurable {
         wrapStyleWord = true
         toolTipText = "每行或逗号分隔一个包前缀，例如 org.slf4j."
     }
-    private val followMq = JBCheckBox("沿本地 RabbitMQ/Kafka topic 继续定位消费者")
-    private val deduplicateResources = JBCheckBox("对 MySQL 表和外围接口结果去重")
+    private val followMq = JBCheckBox("沿本地 RabbitMQ/Kafka/RocketMQ topic 继续定位消费者")
+    private val deduplicateResources = JBCheckBox("对所有资源类型去重")
+    private val hideSimpleAccessors = JBCheckBox("隐藏简单 getter/setter 调用")
     private val customHttpClientClasses = JBTextArea(4, 48).apply {
         lineWrap = true
         wrapStyleWord = true
         toolTipText = "每行或逗号分隔一个 HTTP 工具类完整类名或包前缀"
+    }
+    private val customMqProducerAnnotations = JBTextArea(3, 48).apply {
+        lineWrap = true
+        wrapStyleWord = true
+        toolTipText = "每行或逗号分隔一个生产者注解短名或完整类名，默认启用 JshRabbitProducer"
+    }
+    private val customMqConsumerAnnotations = JBTextArea(3, 48).apply {
+        lineWrap = true
+        wrapStyleWord = true
+        toolTipText = "每行或逗号分隔一个消费者注解短名或完整类名，默认启用 JshRabbitConsumer"
     }
     private val localServiceDirectories = JBTextField()
     private var component: JPanel? = null
@@ -42,8 +53,13 @@ class ChainAuditConfigurable(private val project: Project) : Configurable {
             .addComponent(JBLabel("匹配前缀的方法不会展示、统计或导出；每行或逗号分隔一个前缀。"))
             .addComponent(followMq)
             .addComponent(deduplicateResources)
+            .addComponent(hideSimpleAccessors)
+            .addComponent(JBLabel("仅隐藏与类字段对应的平凡访问器，不影响 getOrderInfo 等业务方法。"))
             .addLabeledComponent(JBLabel("HTTP 工具类前缀："), JScrollPane(customHttpClientClasses))
             .addComponent(JBLabel("工具类方法名用于推断 HTTP 方法，首个参数用于解析 URL。"))
+            .addLabeledComponent(JBLabel("自定义 MQ 生产者注解："), JScrollPane(customMqProducerAnnotations))
+            .addLabeledComponent(JBLabel("自定义 MQ 消费者注解："), JScrollPane(customMqConsumerAnnotations))
+            .addComponent(JBLabel("支持注解短名或完整类名；默认保留 JSH RabbitMQ 规则。"))
             .addLabeledComponent(JBLabel("本地服务目录："), localServiceDirectories)
             .addComponentFillVertically(JPanel(BorderLayout()), 0)
             .panel.also { component = it }
@@ -55,7 +71,10 @@ class ChainAuditConfigurable(private val project: Project) : Configurable {
             normalizedPrefixes(excludedPackages.text) != normalizedPrefixes(state.excludedPackages) ||
             followMq.isSelected != state.followLocalMqConsumers ||
             deduplicateResources.isSelected != state.deduplicateResources ||
+            hideSimpleAccessors.isSelected != state.hideSimpleAccessors ||
             normalizedPrefixes(customHttpClientClasses.text) != normalizedPrefixes(state.customHttpClientClasses) ||
+            normalizedPrefixes(customMqProducerAnnotations.text) != normalizedPrefixes(state.customMqProducerAnnotations) ||
+            normalizedPrefixes(customMqConsumerAnnotations.text) != normalizedPrefixes(state.customMqConsumerAnnotations) ||
             localServiceDirectories.text.trim() != state.localServiceDirectories.trim()
     }
 
@@ -65,7 +84,10 @@ class ChainAuditConfigurable(private val project: Project) : Configurable {
         state.excludedPackages = normalizedPrefixes(excludedPackages.text).joinToString(",")
         state.followLocalMqConsumers = followMq.isSelected
         state.deduplicateResources = deduplicateResources.isSelected
+        state.hideSimpleAccessors = hideSimpleAccessors.isSelected
         state.customHttpClientClasses = normalizedPrefixes(customHttpClientClasses.text).joinToString(",")
+        state.customMqProducerAnnotations = normalizedPrefixes(customMqProducerAnnotations.text).joinToString(",")
+        state.customMqConsumerAnnotations = normalizedPrefixes(customMqConsumerAnnotations.text).joinToString(",")
         state.localServiceDirectories = localServiceDirectories.text.trim()
     }
 
@@ -75,7 +97,10 @@ class ChainAuditConfigurable(private val project: Project) : Configurable {
         excludedPackages.text = normalizedPrefixes(state.excludedPackages).joinToString("\n")
         followMq.isSelected = state.followLocalMqConsumers
         deduplicateResources.isSelected = state.deduplicateResources
+        hideSimpleAccessors.isSelected = state.hideSimpleAccessors
         customHttpClientClasses.text = normalizedPrefixes(state.customHttpClientClasses).joinToString("\n")
+        customMqProducerAnnotations.text = normalizedPrefixes(state.customMqProducerAnnotations).joinToString("\n")
+        customMqConsumerAnnotations.text = normalizedPrefixes(state.customMqConsumerAnnotations).joinToString("\n")
         localServiceDirectories.text = state.localServiceDirectories
     }
 

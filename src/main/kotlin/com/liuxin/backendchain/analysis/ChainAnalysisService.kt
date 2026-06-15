@@ -46,11 +46,11 @@ class ChainAnalysisService(private val project: Project) {
     }
 
     fun analyzeHttpPath(path: String, options: AnalysisOptions = AnalysisOptions()) = locateAndAnalyze("HTTP $path", options) {
-        EntryPointLocator(project).byHttpPath(path)
+        EntryPointLocator(project, options.customMqProducerAnnotations, options.customMqConsumerAnnotations).byHttpPath(path)
     }
 
     fun analyzeMqTopic(topic: String, options: AnalysisOptions = AnalysisOptions()) = locateAndAnalyze("MQ $topic", options) {
-        EntryPointLocator(project).byMqTopic(topic)
+        EntryPointLocator(project, options.customMqProducerAnnotations, options.customMqConsumerAnnotations).byMqTopic(topic)
     }
 
     private fun locateAndAnalyze(label: String, options: AnalysisOptions, locate: () -> List<LocatedEntry>) {
@@ -109,7 +109,8 @@ class ChainAnalysisService(private val project: Project) {
         }
 
     private fun extractors(options: AnalysisOptions): List<ResourceExtractor> = listOf(
-        MyBatisExtractor(), JpaExtractor(), InfrastructureExtractor(),
+        MyBatisExtractor(), MyBatisPlusExtractor(), JpaExtractor(),
+        InfrastructureExtractor(options.customMqProducerAnnotations, options.customMqConsumerAnnotations),
         ExternalHttpExtractor(options.customHttpClientClassPrefixes)
     )
 
@@ -117,16 +118,7 @@ class ChainAnalysisService(private val project: Project) {
         if (results.size == 1) return results.first()
         val methods = results.flatMap { it.callGraph.methods.values }.associateBy { it.key }
         val resources = results.flatMap { it.resources }
-        val mergedResources = if (options.deduplicateResources) {
-            resources.distinctBy {
-                when (it.type) {
-                    ResourceType.MYSQL, ResourceType.EXTERNAL_HTTP -> "${it.type}:${it.name}:${it.operation}"
-                    else -> "${it.type}:${it.name}:${it.operation}:${it.detail}"
-                }
-            }
-        } else {
-            resources.distinctBy { "${it.type}:${it.name}:${it.operation}:${it.detail}" }
-        }
+        val mergedResources = ResourceDeduplicator.normalize(resources, options.deduplicateResources)
         return AnalysisResult(
             EntryPoint(results.first().entry.type, results.joinToString { it.entry.displayName }),
             CallGraph(results.first().callGraph.root, methods, results.flatMap { it.callGraph.edges }),

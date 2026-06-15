@@ -9,10 +9,16 @@ import com.intellij.psi.search.GlobalSearchScope
 import com.intellij.psi.util.PsiTreeUtil
 import com.liuxin.backendchain.model.EntryPoint
 import com.liuxin.backendchain.model.EntryType
+import com.liuxin.backendchain.model.Operation
+import com.liuxin.backendchain.model.ResourceType
 
 data class LocatedEntry(val entry: EntryPoint, val method: PsiMethod)
 
-class EntryPointLocator(private val project: Project) {
+class EntryPointLocator(
+    private val project: Project,
+    private val customMqProducerAnnotations: List<String> = listOf("JshRabbitProducer"),
+    private val customMqConsumerAnnotations: List<String> = listOf("JshRabbitConsumer")
+) {
     private val mappings = listOf("GetMapping", "PostMapping", "PutMapping", "DeleteMapping", "PatchMapping", "RequestMapping")
 
     fun byHttpPath(path: String): List<LocatedEntry> {
@@ -40,10 +46,19 @@ class EntryPointLocator(private val project: Project) {
     fun byMqTopic(topic: String): List<LocatedEntry> = allProjectMethods().mapNotNull { method ->
         ProgressManager.checkCanceled()
         val text = method.text
-        val listener = listOf("KafkaListener", "RabbitListener", "JshRabbitConsumer")
-            .firstNotNullOfOrNull { annotation(method, it) }
-        val declared = annotationString(listener, "topics", "topic", "queues", "queue", "value", "name")
-        if (declared != topic && !text.contains(topic)) return@mapNotNull null
+        val expectedTopic = topic.substringBefore(':')
+        val extractor = InfrastructureExtractor(customMqProducerAnnotations, customMqConsumerAnnotations)
+        val contexts = sequenceOf(CallContext(method, null, method, text)) + findMethodCalls(method).asSequence().map { call ->
+            CallContext(method, call, call.resolveMethod(), call.text)
+        }
+        val consumes = contexts.flatMap { extractor.extract(it).asSequence() }
+            .filter { it.operation == Operation.CONSUME && it.type in setOf(ResourceType.KAFKA, ResourceType.RABBITMQ, ResourceType.ROCKETMQ) }
+            .map { it.name }
+            .toList()
+        val matchesResource = consumes.any { it == topic || it == expectedTopic || it.substringBefore(':') == expectedTopic }
+        if (!matchesResource && !text.contains(topic) && !text.contains(expectedTopic)) {
+            return@mapNotNull null
+        }
         LocatedEntry(EntryPoint(EntryType.MQ, topic, pathOrTopic = topic), method)
     }.toList()
 

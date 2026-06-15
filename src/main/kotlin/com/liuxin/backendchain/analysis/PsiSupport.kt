@@ -15,7 +15,33 @@ internal fun PsiMethod.methodKey(): String {
 
 internal fun PsiMethod.ownerName(): String = containingClass?.qualifiedName ?: containingClass?.name ?: "<unknown>"
 
+internal fun PsiMethod.isSimpleAccessor(): Boolean {
+    val fieldName = when {
+        name.startsWith("get") && name.length > 3 && parameterList.parametersCount == 0 && returnType != PsiTypes.voidType() ->
+            name.substring(3).replaceFirstChar(Char::lowercase)
+        name.startsWith("is") && name.length > 2 && parameterList.parametersCount == 0 &&
+            returnType?.canonicalText in setOf("boolean", "java.lang.Boolean") ->
+            name.substring(2).replaceFirstChar(Char::lowercase)
+        name.startsWith("set") && name.length > 3 && parameterList.parametersCount == 1 ->
+            name.substring(3).replaceFirstChar(Char::lowercase)
+        else -> return false
+    }
+    val field = containingClass?.findFieldByName(fieldName, true) ?: return false
+    val statements = body?.statements ?: return true
+    if (statements.size != 1) return false
+    val statementText = statements.single().text.replace(Regex("\\s+"), "")
+    return when {
+        name.startsWith("set") -> statementText.contains("$fieldName=")
+        else -> statementText == "return$fieldName;" || statementText == "returnthis.$fieldName;"
+    }
+}
+
 internal fun PsiMethod.isProjectSource(project: Project): Boolean {
+    val file = containingFile?.virtualFile ?: return false
+    return com.intellij.openapi.roots.ProjectFileIndex.getInstance(project).isInSourceContent(file)
+}
+
+internal fun PsiClass.isProjectSource(project: Project): Boolean {
     val file = containingFile?.virtualFile ?: return false
     return com.intellij.openapi.roots.ProjectFileIndex.getInstance(project).isInSourceContent(file)
 }
