@@ -14,8 +14,10 @@ import com.intellij.ui.ScrollPaneFactory
 import com.intellij.ui.components.JBLabel
 import com.intellij.ui.components.JBPanel
 import com.intellij.ui.table.JBTable
+import com.liuxin.backendchain.action.AnalyzeBatchHttpAction
 import com.liuxin.backendchain.export.ResultExporter
 import com.liuxin.backendchain.model.*
+import com.liuxin.backendchain.settings.ChainAuditConfigurable
 import com.liuxin.backendchain.settings.ChainAuditSettings
 import java.awt.BorderLayout
 import java.awt.event.MouseAdapter
@@ -52,6 +54,7 @@ class ChainAuditPanel(private val project: Project) : JBPanel<ChainAuditPanel>(B
             add(title)
             add(Box.createHorizontalGlue())
             add(JButton("设置").apply { addActionListener { openSettings() } })
+            add(JButton("批量统计").apply { addActionListener { AnalyzeBatchHttpAction.start(project) } })
             add(JButton("导出 Markdown").apply { addActionListener { export("md") } })
             add(JButton("导出 CSV").apply { addActionListener { export("csv") } })
             add(JButton("导出 Mermaid").apply { addActionListener { export("mmd") } })
@@ -178,7 +181,8 @@ class ChainAuditPanel(private val project: Project) : JBPanel<ChainAuditPanel>(B
         }
     }
 
-    private fun openSettings() = ShowSettingsUtil.getInstance().showSettingsDialog(project, "com.liuxin.backendchain.settings")
+    private fun openSettings() =
+        ShowSettingsUtil.getInstance().showSettingsDialog(project, ChainAuditConfigurable::class.java)
 
     private fun treeRoot() = tree.model.root as DefaultMutableTreeNode
     override fun dispose() = Unit

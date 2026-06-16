@@ -47,20 +47,55 @@ class EntryPointLocator(
         ProgressManager.checkCanceled()
         val text = method.text
         val expectedTopic = topic.substringBefore(':')
-        val extractor = InfrastructureExtractor(customMqProducerAnnotations, customMqConsumerAnnotations)
-        val contexts = sequenceOf(CallContext(method, null, method, text)) + findMethodCalls(method).asSequence().map { call ->
-            CallContext(method, call, call.resolveMethod(), call.text)
+        consumerTopic(method)?.takeIf { matchesTopic(it, topic, expectedTopic) }?.let {
+            return@mapNotNull LocatedEntry(EntryPoint(EntryType.MQ, topic, pathOrTopic = topic), method)
         }
+        val extractor = InfrastructureExtractor(customMqProducerAnnotations, customMqConsumerAnnotations)
+        val contexts = sequenceOf(CallContext(method, null, method, text)) +
+            findMethodCalls(method).asSequence()
+                .filter { it.methodExpression.referenceName == "subscribe" }
+                .map { call -> CallContext(method, call, call.resolveMethod(), call.text) }
         val consumes = contexts.flatMap { extractor.extract(it).asSequence() }
             .filter { it.operation == Operation.CONSUME && it.type in setOf(ResourceType.KAFKA, ResourceType.RABBITMQ, ResourceType.ROCKETMQ) }
             .map { it.name }
             .toList()
-        val matchesResource = consumes.any { it == topic || it == expectedTopic || it.substringBefore(':') == expectedTopic }
+        val matchesResource = consumes.any { matchesTopic(it, topic, expectedTopic) }
         if (!matchesResource && !text.contains(topic) && !text.contains(expectedTopic)) {
             return@mapNotNull null
         }
         LocatedEntry(EntryPoint(EntryType.MQ, topic, pathOrTopic = topic), method)
     }.toList()
+
+    private fun consumerTopic(method: PsiMethod): String? =
+        annotationString(annotation(method, "KafkaListener"), "topics", "topic", "value")
+            ?: annotationString(annotation(method, "RabbitListener"), "queues", "queue", "value", "name")
+            ?: customConsumerTopic(method)
+            ?: rocketConsumerTopic(method)
+
+    private fun customConsumerTopic(method: PsiMethod): String? {
+        val configured = method.annotations.firstOrNull { matchesConfiguredAnnotation(it, customMqConsumerAnnotations) }
+            ?: method.containingClass?.annotations?.firstOrNull { matchesConfiguredAnnotation(it, customMqConsumerAnnotations) }
+            ?: return null
+        return annotationString(configured, "topics", "topic", "queues", "queue", "value", "name")
+    }
+
+    private fun rocketConsumerTopic(method: PsiMethod): String? {
+        val listener = annotation(method, "RocketMQMessageListener")
+            ?: annotation(method.containingClass, "RocketMQMessageListener")?.takeIf { method.name == "onMessage" }
+            ?: return null
+        val topic = annotationString(listener, "topic") ?: return null
+        val selector = annotationString(listener, "selectorExpression")
+        return if (selector.isNullOrBlank() || selector == "*") topic else "$topic:$selector"
+    }
+
+    private fun matchesTopic(candidate: String, topic: String, expectedTopic: String): Boolean =
+        candidate == topic || candidate == expectedTopic || candidate.substringBefore(':') == expectedTopic
+
+    private fun matchesConfiguredAnnotation(annotation: PsiAnnotation, configured: List<String>): Boolean {
+        val qualifiedName = annotation.qualifiedName.orEmpty()
+        val shortName = annotation.nameReferenceElement?.referenceName.orEmpty()
+        return configured.any { it == qualifiedName || it == shortName || qualifiedName.endsWith(".$it") }
+    }
 
     private fun allProjectMethods(): Sequence<PsiMethod> {
         val manager = PsiManager.getInstance(project)

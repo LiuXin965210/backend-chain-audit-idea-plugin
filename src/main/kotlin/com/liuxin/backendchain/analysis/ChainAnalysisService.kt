@@ -6,13 +6,16 @@ import com.intellij.openapi.components.Service
 import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.progress.ProcessCanceledException
 import com.intellij.openapi.progress.ProgressIndicator
+import com.intellij.openapi.progress.ProgressManager
 import com.intellij.openapi.progress.Task
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.util.Disposer
 import com.intellij.psi.PsiMethod
 import com.intellij.psi.util.PsiModificationTracker
 import com.intellij.util.concurrency.AppExecutorUtil
+import com.liuxin.backendchain.export.ResultExporter
 import com.liuxin.backendchain.model.*
+import java.io.File
 import java.util.concurrent.CopyOnWriteArrayList
 
 @Service(Service.Level.PROJECT)
@@ -39,7 +42,7 @@ class ChainAnalysisService(private val project: Project) {
             publish(it); return
         }
         runBackground("分析 ${entry.displayName}") {
-            val result = CallGraphAnalyzer(project, options, extractors(options)).analyze(entry, method)
+            val result = CallGraphAnalyzer(project, options, defaultExtractors(options)).analyze(entry, method)
             cached = CachedResult(cacheKey, stamp, result)
             result
         }
@@ -53,6 +56,89 @@ class ChainAnalysisService(private val project: Project) {
         EntryPointLocator(project, options.customMqProducerAnnotations, options.customMqConsumerAnnotations).byMqTopic(topic)
     }
 
+    fun analyzeBatchHttpPaths(
+        inputs: List<String>,
+        csvFile: File?,
+        markdownFile: File?,
+        options: AnalysisOptions = AnalysisOptions()
+    ) {
+        publishStatus(AnalysisStatus("批量统计等待 IDEA 索引并开始扫描...", running = true))
+        object : Task.Backgroundable(project, "批量统计 HTTP 接口", true) {
+            private val rows = mutableListOf<BatchAnalysisRow>()
+
+            override fun run(indicator: ProgressIndicator) {
+                indicator.isIndeterminate = false
+                var canceled = false
+                try {
+                    val analyzer = BatchHttpAnalyzer(project, options)
+                    inputs.forEachIndexed { offset, raw ->
+                        ProgressManager.checkCanceled()
+                        val index = offset + 1
+                        val input = raw.trim()
+                        updateBatchProgress(indicator, index, inputs.size, input)
+                        rows += ReadAction.nonBlocking<BatchAnalysisRow> {
+                            analyzer.analyzeRow(index, input)
+                        }
+                            .inSmartMode(project)
+                            .expireWith(project)
+                            .submit(AppExecutorUtil.getAppExecutorService())
+                            .get()
+                        indicator.fraction = index.toDouble() / inputs.size.coerceAtLeast(1)
+                    }
+                    indicator.fraction = 1.0
+                } catch (e: ProcessCanceledException) {
+                    canceled = true
+                } catch (e: Throwable) {
+                    val cause = e.cause ?: e
+                    LOG.warn("Backend chain batch analysis failed", cause)
+                    rows += BatchAnalysisRow(
+                        rows.size + 1,
+                        "<批量任务>",
+                        BatchRowStatus.FAILED,
+                        cause.message ?: cause.javaClass.simpleName
+                    )
+                } finally {
+                    val report = BatchAnalysisReport(rows.toList(), canceled)
+                    try {
+                        csvFile?.writeText(ResultExporter.batchCsv(report))
+                        markdownFile?.writeText(ResultExporter.batchMarkdown(report))
+                        val suffix = if (canceled) "，用户取消，已导出完成部分" else "，扫描完成"
+                        publishStatus(
+                            AnalysisStatus(
+                                "批量统计$suffix：${exportedFiles(csvFile, markdownFile)}",
+                                running = false
+                            )
+                        )
+                    } catch (e: Throwable) {
+                        val cause = e.cause ?: e
+                        LOG.warn("Backend chain batch export failed", cause)
+                        publishStatus(
+                            AnalysisStatus(
+                                "批量统计导出失败：${cause.message ?: cause.javaClass.simpleName}",
+                                running = false,
+                                error = true
+                            )
+                        )
+                    }
+                }
+            }
+        }.queue()
+    }
+
+    private fun updateBatchProgress(indicator: ProgressIndicator, index: Int, total: Int, input: String) {
+        val message = "进度 $index/$total：$input"
+        indicator.text = message
+        indicator.text2 = ""
+        indicator.fraction = (index - 1).toDouble() / total.coerceAtLeast(1)
+        publishStatus(AnalysisStatus(message, running = true))
+    }
+
+    private fun exportedFiles(csvFile: File?, markdownFile: File?): String =
+        listOfNotNull(
+            csvFile?.let { "CSV ${it.absolutePath}" },
+            markdownFile?.let { "Markdown ${it.absolutePath}" }
+        ).joinToString("，")
+
     private fun locateAndAnalyze(label: String, options: AnalysisOptions, locate: () -> List<LocatedEntry>) {
         runBackground("定位 $label") {
             val entries = locate()
@@ -63,7 +149,7 @@ class ChainAnalysisService(private val project: Project) {
                     listOf(AnalysisWarning("未找到入口：$label"))
                 )
             } else {
-                val results = entries.map { CallGraphAnalyzer(project, options, extractors(options)).analyze(it.entry, it.method) }
+                val results = entries.map { CallGraphAnalyzer(project, options, defaultExtractors(options)).analyze(it.entry, it.method) }
                 merge(results, options)
             }
         }
@@ -107,12 +193,6 @@ class ChainAnalysisService(private val project: Project) {
         com.intellij.openapi.application.ApplicationManager.getApplication().invokeLater {
             statusListeners.forEach { it(status) }
         }
-
-    private fun extractors(options: AnalysisOptions): List<ResourceExtractor> = listOf(
-        MyBatisExtractor(), MyBatisPlusExtractor(), JpaExtractor(),
-        InfrastructureExtractor(options.customMqProducerAnnotations, options.customMqConsumerAnnotations),
-        ExternalHttpExtractor(options.customHttpClientClassPrefixes)
-    )
 
     private fun merge(results: List<AnalysisResult>, options: AnalysisOptions): AnalysisResult {
         if (results.size == 1) return results.first()

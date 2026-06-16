@@ -6,6 +6,7 @@ import com.intellij.psi.search.GlobalSearchScope
 import com.intellij.psi.util.PsiTreeUtil
 import com.intellij.testFramework.fixtures.BasePlatformTestCase
 import com.liuxin.backendchain.model.AnalysisOptions
+import com.liuxin.backendchain.model.BatchRowStatus
 import com.liuxin.backendchain.model.EntryPoint
 import com.liuxin.backendchain.model.EntryType
 import com.liuxin.backendchain.model.Operation
@@ -515,6 +516,91 @@ class PsiSupportTest : BasePlatformTestCase() {
         assertEquals("order-topic:created", resource.name)
         assertEquals(Operation.CONSUME, resource.operation)
         assertEquals(1, EntryPointLocator(project).byMqTopic("order-topic:created").size)
+    }
+
+    fun testBatchHttpAnalyzerHandlesStrictHttpLocationOutcomes() {
+        myFixture.configureByText(
+            "Mappings.java",
+            """
+                @interface RequestMapping { String[] value() default {}; String[] path() default {}; }
+                @interface GetMapping { String[] value() default {}; String[] path() default {}; }
+                @RequestMapping("/api")
+                class OrderController {
+                    @GetMapping("/order/save")
+                    void save() {}
+                }
+                class FirstDuplicateController {
+                    @GetMapping("/dup")
+                    void first() {}
+                }
+                class SecondDuplicateController {
+                    @GetMapping("/dup")
+                    void second() {}
+                }
+            """.trimIndent()
+        )
+
+        val analyzer = BatchHttpAnalyzer(project, AnalysisOptions())
+        val success = analyzer.analyzeRow(1, "/api/order/save")
+        val missing = analyzer.analyzeRow(2, "/missing")
+        val duplicate = analyzer.analyzeRow(3, "/dup")
+        val nonHttp = analyzer.analyzeRow(4, "order.topic")
+
+        assertEquals(BatchRowStatus.SUCCESS, success.status)
+        assertEquals("OrderController.save", success.analyzedMethod?.displayName)
+        assertEquals(BatchRowStatus.SKIPPED, missing.status)
+        assertEquals("未定位到接口", missing.reason)
+        assertEquals(BatchRowStatus.SKIPPED, duplicate.status)
+        assertEquals("定位到多个接口", duplicate.reason)
+        assertEquals(BatchRowStatus.SKIPPED, nonHttp.status)
+        assertEquals("不是 HTTP 路径", nonHttp.reason)
+    }
+
+    fun testBatchHttpAnalyzerUsesSingleInterfaceImplementationAsRoot() {
+        myFixture.configureByText(
+            "InterfaceMapping.java",
+            """
+                @interface GetMapping { String[] value() default {}; String[] path() default {}; }
+                interface OrderApi {
+                    @GetMapping("/interface/order")
+                    void submit();
+                }
+                class OrderApiImpl implements OrderApi {
+                    @Override public void submit() { save(); }
+                    void save() {}
+                }
+            """.trimIndent()
+        )
+
+        val row = BatchHttpAnalyzer(project, AnalysisOptions()).analyzeRow(1, "/interface/order")
+
+        assertEquals(BatchRowStatus.SUCCESS, row.status)
+        assertEquals("OrderApiImpl.submit", row.analyzedMethod?.displayName)
+        assertTrue(row.result!!.callGraph.methods.values.any { it.displayName == "OrderApiImpl.save" })
+    }
+
+    fun testBatchHttpAnalyzerSkipsInterfaceMappingWithMultipleImplementations() {
+        myFixture.configureByText(
+            "MultiInterfaceMapping.java",
+            """
+                @interface GetMapping { String[] value() default {}; String[] path() default {}; }
+                interface MultiOrderApi {
+                    @GetMapping("/interface/multi-order")
+                    void submit();
+                }
+                class FirstOrderApiImpl implements MultiOrderApi {
+                    @Override public void submit() {}
+                }
+                class SecondOrderApiImpl implements MultiOrderApi {
+                    @Override public void submit() {}
+                }
+            """.trimIndent()
+        )
+
+        val row = BatchHttpAnalyzer(project, AnalysisOptions()).analyzeRow(1, "/interface/multi-order")
+
+        assertEquals(BatchRowStatus.SKIPPED, row.status)
+        assertEquals("interface 方法存在多个实现", row.reason)
     }
 
     fun testExtractsMyBatisPlusBaseMapperAndTableName() {

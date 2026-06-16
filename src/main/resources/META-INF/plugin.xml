@@ -37,6 +37,10 @@
                     class="com.liuxin.backendchain.action.AnalyzeByInputAction"
                     text="按路径或 Topic 分析"
                     description="输入 HTTP 路径或 MQ topic 定位并分析入口"/>
+            <action id="com.liuxin.backendchain.AnalyzeBatchHttp"
+                    class="com.liuxin.backendchain.action.AnalyzeBatchHttpAction"
+                    text="批量统计 HTTP 接口"
+                    description="输入 HTTP 接口清单并导出批量资源统计"/>
         </group>
     </actions>
 </idea-plugin>

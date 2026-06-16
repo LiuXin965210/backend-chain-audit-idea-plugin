@@ -79,6 +79,26 @@ data class AnalysisResult(
     val warnings: List<AnalysisWarning>
 )
 
+enum class BatchRowStatus(val displayName: String) {
+    SUCCESS("成功"),
+    SKIPPED("跳过"),
+    FAILED("失败")
+}
+
+data class BatchAnalysisRow(
+    val index: Int,
+    val input: String,
+    val status: BatchRowStatus,
+    val reason: String? = null,
+    val result: AnalysisResult? = null,
+    val analyzedMethod: MethodRef? = null
+)
+
+data class BatchAnalysisReport(
+    val rows: List<BatchAnalysisRow>,
+    val canceled: Boolean = false
+)
+
 data class AnalysisOptions(
     val maxDepth: Int = 30,
     val excludedPackagePrefixes: List<String> = listOf("java.", "javax.", "jakarta.", "kotlin.", "org.springframework."),
