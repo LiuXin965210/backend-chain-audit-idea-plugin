@@ -434,6 +434,47 @@ class PsiSupportTest : BasePlatformTestCase() {
         assertEquals(Confidence.CONFIRMED, resource.confidence)
     }
 
+    fun testExtractsJshRocketMqProducerTopicAndTagFromValueFields() {
+        myFixture.configureByText(
+            "JshRocketMqProducer.java",
+            """
+                package jsh.mgt.lib.rocketmq.producer;
+                public class JshRocketMqProducer {
+                    public void sendDelayMsg(String topic, String tag, String key, byte[] body, long time) {}
+                }
+            """.trimIndent()
+        )
+        myFixture.configureByText(
+            "ReturnServiceApplyAutoAuditSender.java",
+            """
+                import jsh.mgt.lib.rocketmq.producer.JshRocketMqProducer;
+                @interface Value { String value(); }
+                class ReturnServiceApplyAutoAuditSender {
+                    @Value("${'$'}{rocketmq.producer.topic.returnServiceAutoAudit}") String topic;
+                    @Value("${'$'}{rocketmq.producer.tag.returnServiceAutoAudit}") String tag;
+                    JshRocketMqProducer jshRocketMqProducer;
+                    void sendMq(byte[] body) {
+                        jshRocketMqProducer.sendDelayMsg(topic, tag, "key", body, System.currentTimeMillis());
+                    }
+                }
+            """.trimIndent()
+        )
+
+        val method = findClass("ReturnServiceApplyAutoAuditSender").findMethodsByName("sendMq", false).single()
+        val call = findMethodCalls(method).single { it.methodExpression.referenceName == "sendDelayMsg" }
+        val resource = InfrastructureExtractor()
+            .extract(CallContext(method, call, call.resolveMethod(), call.text)).single()
+
+        assertEquals(ResourceType.ROCKETMQ, resource.type)
+        assertEquals(
+            "${'$'}{rocketmq.producer.topic.returnServiceAutoAudit}:${'$'}{rocketmq.producer.tag.returnServiceAutoAudit}",
+            resource.name
+        )
+        assertEquals(Operation.PRODUCE, resource.operation)
+        assertEquals(Confidence.CONFIRMED, resource.confidence)
+        assertContains(resource.detail, "RocketMQ 包装器参数解析")
+    }
+
     fun testExtractsAliyunOnsSendAsyncMessageTopicAndTag() {
         myFixture.configureByText(
             "Message.java",
@@ -568,6 +609,115 @@ class PsiSupportTest : BasePlatformTestCase() {
         assertEquals("order-topic:created", resource.name)
         assertEquals(Operation.CONSUME, resource.operation)
         assertEquals(1, EntryPointLocator(project).byMqTopic("order-topic:created").size)
+    }
+
+    fun testExtractsAndLocatesJshRocketMqListenerByConfigKey() {
+        myFixture.configureByText(
+            "JshRocketMqListener.java",
+            """
+                package jsh.mgt.lib.rocketmq.consumer;
+                public interface JshRocketMqListener {
+                    String topic();
+                    String tag();
+                    void consume(byte[] bytes);
+                }
+            """.trimIndent()
+        )
+        myFixture.configureByText(
+            "RocketMqProperties.java",
+            """
+                package jsh.mgt.lib.rocketmq.properties;
+                public class RocketMqProperties {
+                    public java.util.Map<String, Config> getConsumer() { return null; }
+                    public static class Config {
+                        public String getTopic() { return null; }
+                        public String getTag() { return null; }
+                    }
+                }
+            """.trimIndent()
+        )
+        myFixture.configureByText(
+            "ReturnServiceApplyAutoAuditConsume.java",
+            """
+                import jsh.mgt.lib.rocketmq.consumer.JshRocketMqListener;
+                import jsh.mgt.lib.rocketmq.properties.RocketMqProperties;
+                class ReturnServiceApplyAutoAuditConsume implements JshRocketMqListener {
+                    RocketMqProperties rocketMqProperties;
+                    public String topic() {
+                        return rocketMqProperties.getConsumer().get("returnServiceAutoAudit").getTopic();
+                    }
+                    public String tag() {
+                        return rocketMqProperties.getConsumer().get("returnServiceAutoAudit").getTag();
+                    }
+                    public void consume(byte[] bytes) {}
+                }
+            """.trimIndent()
+        )
+
+        val method = findClass("ReturnServiceApplyAutoAuditConsume").findMethodsByName("consume", false).single()
+        val resource = InfrastructureExtractor()
+            .extract(CallContext(method, null, method, method.text)).single()
+
+        assertEquals(ResourceType.ROCKETMQ, resource.type)
+        assertEquals("returnServiceAutoAudit", resource.name)
+        assertEquals(Operation.CONSUME, resource.operation)
+        assertEquals(Confidence.INFERRED, resource.confidence)
+        assertEquals(
+            1,
+            EntryPointLocator(project).byMqTopic(
+                "${'$'}{rocketmq.producer.topic.returnServiceAutoAudit}:${'$'}{rocketmq.producer.tag.returnServiceAutoAudit}"
+            ).size
+        )
+    }
+
+    fun testExtractsConfiguredRocketMqProducerAndConsumerNames() {
+        myFixture.configureByText(
+            "CustomRocket.java",
+            """
+                package com.company.mq;
+                public class CompanyRocketProducer {
+                    public void sendDelayMsg(String topic, String tag, String key, byte[] body, long time) {}
+                }
+                interface CompanyRocketListener {
+                    String topic();
+                    String tag();
+                    void consume(byte[] bytes);
+                }
+                class CompanySender {
+                    CompanyRocketProducer producer;
+                    void send(byte[] body) {
+                        producer.sendDelayMsg("company.topic", "created", "key", body, 1L);
+                    }
+                }
+                class CompanyConsumer implements CompanyRocketListener {
+                    public String topic() { return "company.topic"; }
+                    public String tag() { return "created"; }
+                    public void consume(byte[] bytes) {}
+                }
+            """.trimIndent()
+        )
+        val extractor = InfrastructureExtractor(
+            customMqProducerClasses = listOf("CompanyRocketProducer"),
+            customMqConsumerInterfaces = listOf("CompanyRocketListener")
+        )
+
+        val send = findClass("com.company.mq.CompanySender").findMethodsByName("send", false).single()
+        val sendCall = findMethodCalls(send).single { it.methodExpression.referenceName == "sendDelayMsg" }
+        val produced = extractor.extract(CallContext(send, sendCall, sendCall.resolveMethod(), sendCall.text)).single()
+        val consume = findClass("com.company.mq.CompanyConsumer").findMethodsByName("consume", false).single()
+        val consumed = extractor.extract(CallContext(consume, null, consume, consume.text)).single()
+
+        assertEquals("company.topic:created", produced.name)
+        assertEquals(Operation.PRODUCE, produced.operation)
+        assertEquals("company.topic:created", consumed.name)
+        assertEquals(Operation.CONSUME, consumed.operation)
+        assertTrue(
+            EntryPointLocator(
+                project,
+                customMqProducerClasses = listOf("CompanyRocketProducer"),
+                customMqConsumerInterfaces = listOf("CompanyRocketListener")
+            ).byMqTopic("company.topic:created").isNotEmpty()
+        )
     }
 
     fun testBatchHttpAnalyzerHandlesStrictHttpLocationOutcomes() {

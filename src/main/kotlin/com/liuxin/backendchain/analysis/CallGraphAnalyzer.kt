@@ -109,7 +109,9 @@ class CallGraphAnalyzer(
         val locator = EntryPointLocator(
             project,
             options.customMqProducerAnnotations,
-            options.customMqConsumerAnnotations
+            options.customMqConsumerAnnotations,
+            options.customMqProducerClasses,
+            options.customMqConsumerInterfaces
         )
         topics.forEach { topic ->
             locator.byMqTopic(topic).forEach { located ->

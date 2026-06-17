@@ -108,5 +108,7 @@ data class AnalysisOptions(
     val hideSimpleAccessors: Boolean = true,
     val customHttpClientClassPrefixes: List<String> = listOf("jsh.mgt.lib.http.BasicHttpUtil"),
     val customMqProducerAnnotations: List<String> = listOf("JshRabbitProducer"),
-    val customMqConsumerAnnotations: List<String> = listOf("JshRabbitConsumer")
+    val customMqConsumerAnnotations: List<String> = listOf("JshRabbitConsumer"),
+    val customMqProducerClasses: List<String> = listOf("jsh.mgt.lib.rocketmq.producer.JshRocketMqProducer"),
+    val customMqConsumerInterfaces: List<String> = listOf("jsh.mgt.lib.rocketmq.consumer.JshRocketMqListener")
 )

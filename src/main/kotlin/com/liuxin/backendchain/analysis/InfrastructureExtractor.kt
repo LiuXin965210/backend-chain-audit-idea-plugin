@@ -4,15 +4,20 @@ import com.intellij.psi.PsiAnnotation
 import com.intellij.psi.PsiElement
 import com.intellij.psi.PsiExpression
 import com.intellij.psi.PsiField
+import com.intellij.psi.PsiLiteralExpression
 import com.intellij.psi.PsiNewExpression
 import com.intellij.psi.PsiReferenceExpression
+import com.intellij.psi.PsiReturnStatement
 import com.intellij.psi.PsiVariable
 import com.intellij.psi.SmartPointerManager
+import com.intellij.psi.util.PsiTreeUtil
 import com.liuxin.backendchain.model.*
 
 class InfrastructureExtractor(
     private val customMqProducerAnnotations: List<String> = listOf("JshRabbitProducer"),
-    private val customMqConsumerAnnotations: List<String> = listOf("JshRabbitConsumer")
+    private val customMqConsumerAnnotations: List<String> = listOf("JshRabbitConsumer"),
+    private val customMqProducerClasses: List<String> = listOf("jsh.mgt.lib.rocketmq.producer.JshRocketMqProducer"),
+    private val customMqConsumerInterfaces: List<String> = listOf("jsh.mgt.lib.rocketmq.consumer.JshRocketMqListener")
 ) : ResourceExtractor {
     override fun extract(context: CallContext): List<ResourceRef> {
         val result = mutableListOf<ResourceRef>()
@@ -69,6 +74,16 @@ class InfrastructureExtractor(
                     pointer
                 )
             }
+            isCustomRocketProducer(owner, name) -> rocketTopicTagDestination(call)?.let { destination ->
+                result += ResourceRef(
+                    ResourceType.ROCKETMQ,
+                    destination,
+                    Operation.PRODUCE,
+                    confidenceForDestination(destination),
+                    "$owner.$name；从 RocketMQ 包装器参数解析",
+                    pointer
+                )
+            }
             owner.contains("RocketMQ") || owner.endsWith(".RocketMQTemplate") -> {
                 val expression = call?.argumentList?.expressions?.firstOrNull()
                 val destination = expression?.let(::configuredString)
@@ -115,6 +130,9 @@ class InfrastructureExtractor(
         rocketListener(context.method)?.let {
             result += ResourceRef(ResourceType.ROCKETMQ, it, Operation.CONSUME, Confidence.CONFIRMED, "@RocketMQMessageListener", pointer)
         }
+        jshRocketListener(context.method)?.let {
+            result += ResourceRef(ResourceType.ROCKETMQ, it, Operation.CONSUME, Confidence.INFERRED, "自定义 MQ 消费者接口 topic()/tag()", pointer)
+        }
         return result
     }
 
@@ -142,6 +160,26 @@ class InfrastructureExtractor(
         val topic = annotationString(listener, "topic") ?: return null
         val selector = annotationString(listener, "selectorExpression")
         return if (selector.isNullOrBlank() || selector == "*") topic else "$topic:$selector"
+    }
+
+    private fun jshRocketListener(method: com.intellij.psi.PsiMethod): String? {
+        val clazz = method.containingClass ?: return null
+        if (method.name != "consume") return null
+        if (clazz.interfaces.none { matchesConfiguredClass(it.qualifiedName.orEmpty(), it.name.orEmpty(), customMqConsumerInterfaces) }) {
+            return null
+        }
+        val topic = rocketListenerMethodValue(clazz, "topic") ?: return null
+        val tag = rocketListenerMethodValue(clazz, "tag")
+        return if (tag.isNullOrBlank() || tag == "*" || tag == topic) topic else "$topic:$tag"
+    }
+
+    private fun rocketListenerMethodValue(clazz: com.intellij.psi.PsiClass, methodName: String): String? {
+        val method = clazz.findMethodsByName(methodName, false).firstOrNull { it.parameterList.parametersCount == 0 } ?: return null
+        val expression = PsiTreeUtil.findChildOfType(method.body, PsiReturnStatement::class.java)?.returnValue ?: return null
+        constantString(expression)?.let { return it }
+        return PsiTreeUtil.findChildrenOfType(expression, PsiLiteralExpression::class.java)
+            .mapNotNull { it.value as? String }
+            .firstOrNull()
     }
 
     private fun kafkaTopic(target: com.intellij.psi.PsiMethod?, call: com.intellij.psi.PsiMethodCallExpression?): String? {
@@ -186,6 +224,13 @@ class InfrastructureExtractor(
         return if (tag.isNullOrBlank() || tag == "*") topic else "$topic:$tag"
     }
 
+    private fun rocketTopicTagDestination(call: com.intellij.psi.PsiMethodCallExpression?): String? {
+        val args = call?.argumentList?.expressions.orEmpty()
+        val topic = args.getOrNull(0)?.let(::configuredString) ?: return dynamicDestination(args.getOrNull(0))
+        val tag = args.getOrNull(1)?.let(::configuredString)
+        return if (tag.isNullOrBlank() || tag == "*") topic else "$topic:$tag"
+    }
+
     private fun dynamicDestination(expression: PsiExpression?): String? =
         expression?.text?.let { "动态 RocketMQ destination: $it" }
 
@@ -197,8 +242,15 @@ class InfrastructureExtractor(
         name == "subscribe" &&
             (owner.startsWith("com.aliyun.openservices.ons.api.") || owner.startsWith("org.apache.rocketmq."))
 
+    private fun isCustomRocketProducer(owner: String, name: String): Boolean =
+        name in setOf("sendMsg", "sendDelayMsg", "sendMessage", "sendDelayMessage") &&
+            matchesConfiguredClass(owner, owner.substringAfterLast('.'), customMqProducerClasses)
+
     private fun confidenceForDestination(destination: String): Confidence =
         if (destination.startsWith("动态 RocketMQ destination:")) Confidence.UNRESOLVED else Confidence.CONFIRMED
+
+    private fun matchesConfiguredClass(qualifiedName: String, shortName: String, configured: List<String>): Boolean =
+        configured.any { it == qualifiedName || it == shortName || qualifiedName.endsWith(".$it") }
 
     private fun matchesConfiguredAnnotation(annotation: PsiAnnotation, configured: List<String>): Boolean {
         val qualifiedName = annotation.qualifiedName.orEmpty()

@@ -24,6 +24,8 @@ import javax.swing.BoxLayout
 import javax.swing.JComponent
 import javax.swing.JPanel
 
+private const val MAX_BATCH_HTTP_INPUTS = 100
+
 class AnalyzeBatchHttpAction : AnAction() {
     override fun actionPerformed(e: AnActionEvent) {
         val project = e.project ?: return
@@ -40,15 +42,15 @@ class AnalyzeBatchHttpAction : AnAction() {
 private fun run(project: Project) {
     val dialog = BatchHttpInputDialog(project)
     if (!dialog.showAndGet()) return
-    val inputs = dialog.inputs()
-    if (inputs.isEmpty()) {
-        Messages.showWarningDialog(project, "请输入至少一个 HTTP 接口路径。", "Backend Chain Audit")
+    val validation = validateBatchHttpInputs(dialog.rawInput())
+    if (validation.errors.isNotEmpty()) {
+        Messages.showErrorDialog(project, validation.errorMessage(), "批量统计输入校验失败")
         return
     }
-    if (inputs.size > 100) {
-        Messages.showErrorDialog(project, "批量统计单次最多支持 100 个接口，当前输入 ${inputs.size} 个。", "Backend Chain Audit")
-        return
+    if (validation.duplicateLines.isNotEmpty()) {
+        Messages.showInfoMessage(project, validation.deduplicateMessage(), "批量统计已去重")
     }
+    val inputs = validation.inputs
     val format = dialog.exportFormat()
     if (!format.includesCsv && !format.includesMarkdown) {
         Messages.showWarningDialog(project, "批量统计必须至少选择一种导出格式。", "Backend Chain Audit")
@@ -64,6 +66,62 @@ private fun run(project: Project) {
         markdownFile,
         project.service<ChainAuditSettings>().options()
     )
+}
+
+internal fun validateBatchHttpInputs(rawInput: String): BatchHttpInputValidation {
+    val errors = mutableListOf<String>()
+    val seen = linkedSetOf<String>()
+    val inputs = mutableListOf<String>()
+    val duplicateLines = mutableListOf<Pair<Int, String>>()
+    rawInput.lineSequence().forEachIndexed { index, rawLine ->
+        val lineNumber = index + 1
+        val value = rawLine.trim()
+        if (value.isEmpty()) return@forEachIndexed
+        val error = validateHttpPath(value)
+        if (error != null) {
+            errors += "第 ${lineNumber} 行 `$value`：$error"
+            return@forEachIndexed
+        }
+        if (seen.add(value)) {
+            inputs += value
+        } else {
+            duplicateLines += lineNumber to value
+        }
+    }
+    if (inputs.isEmpty() && errors.isEmpty()) {
+        errors += "请输入至少一个 HTTP 接口路径。"
+    }
+    if (inputs.size > MAX_BATCH_HTTP_INPUTS) {
+        errors += "批量统计单次最多支持 $MAX_BATCH_HTTP_INPUTS 个去重后的接口，当前为 ${inputs.size} 个。"
+    }
+    return BatchHttpInputValidation(inputs, duplicateLines, errors)
+}
+
+private fun validateHttpPath(value: String): String? = when {
+    !value.startsWith("/") -> "必须以 `/` 开头，请输入接口路径，不要输入完整 URL。"
+    value == "/" -> "不能只输入根路径 `/`。"
+    value.any(Char::isWhitespace) -> "路径中不能包含空格或制表符；请确认是否一行写了多个接口。"
+    value.contains("://") -> "请只输入路径部分，例如 `/api/order/save`。"
+    value.contains("?") || value.contains("#") -> "请只输入路径，不要包含 query 参数或 fragment。"
+    else -> null
+}
+
+internal data class BatchHttpInputValidation(
+    val inputs: List<String>,
+    val duplicateLines: List<Pair<Int, String>>,
+    val errors: List<String>
+) {
+    fun errorMessage(): String = buildString {
+        appendLine("请修正以下输入后再执行批量统计：")
+        errors.take(20).forEach { appendLine("- $it") }
+        if (errors.size > 20) appendLine("- 还有 ${errors.size - 20} 条错误未显示。")
+    }.trimEnd()
+
+    fun deduplicateMessage(): String = buildString {
+        appendLine("已自动去重 ${duplicateLines.size} 行重复接口，将仅扫描 ${inputs.size} 个唯一接口。")
+        duplicateLines.take(10).forEach { (line, value) -> appendLine("- 第 ${line} 行重复：`$value`") }
+        if (duplicateLines.size > 10) appendLine("- 还有 ${duplicateLines.size - 10} 行重复未显示。")
+    }.trimEnd()
 }
 
 private fun chooseExportFile(project: Project, format: BatchExportFormat): File? {
@@ -103,11 +161,7 @@ private class BatchHttpInputDialog(project: Project) : DialogWrapper(project) {
         init()
     }
 
-    fun inputs(): List<String> = textArea.text
-        .lineSequence()
-        .map { it.trim() }
-        .filter { it.isNotEmpty() }
-        .toList()
+    fun rawInput(): String = textArea.text
 
     fun exportFormat(): BatchExportFormat = BatchExportFormat(
         includesCsv = csvCheckBox.isSelected,

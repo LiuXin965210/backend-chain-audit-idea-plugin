@@ -49,11 +49,23 @@ class ChainAnalysisService(private val project: Project) {
     }
 
     fun analyzeHttpPath(path: String, options: AnalysisOptions = AnalysisOptions()) = locateAndAnalyze("HTTP $path", options) {
-        EntryPointLocator(project, options.customMqProducerAnnotations, options.customMqConsumerAnnotations).byHttpPath(path)
+        EntryPointLocator(
+            project,
+            options.customMqProducerAnnotations,
+            options.customMqConsumerAnnotations,
+            options.customMqProducerClasses,
+            options.customMqConsumerInterfaces
+        ).byHttpPath(path)
     }
 
     fun analyzeMqTopic(topic: String, options: AnalysisOptions = AnalysisOptions()) = locateAndAnalyze("MQ $topic", options) {
-        EntryPointLocator(project, options.customMqProducerAnnotations, options.customMqConsumerAnnotations).byMqTopic(topic)
+        EntryPointLocator(
+            project,
+            options.customMqProducerAnnotations,
+            options.customMqConsumerAnnotations,
+            options.customMqProducerClasses,
+            options.customMqConsumerInterfaces
+        ).byMqTopic(topic)
     }
 
     fun analyzeBatchHttpPaths(

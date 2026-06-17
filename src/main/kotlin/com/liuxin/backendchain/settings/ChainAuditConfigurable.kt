@@ -41,6 +41,16 @@ class ChainAuditConfigurable(private val project: Project) : Configurable {
         wrapStyleWord = true
         toolTipText = "每行或逗号分隔一个消费者注解短名或完整类名，默认启用 JshRabbitConsumer"
     }
+    private val customMqProducerClasses = JBTextArea(3, 48).apply {
+        lineWrap = true
+        wrapStyleWord = true
+        toolTipText = "每行或逗号分隔一个生产者类短名或完整类名，默认启用 JshRocketMqProducer"
+    }
+    private val customMqConsumerInterfaces = JBTextArea(3, 48).apply {
+        lineWrap = true
+        wrapStyleWord = true
+        toolTipText = "每行或逗号分隔一个消费者接口短名或完整类名，默认启用 JshRocketMqListener"
+    }
     private val localServiceDirectories = JBTextField()
     private var component: JPanel? = null
 
@@ -62,7 +72,9 @@ class ChainAuditConfigurable(private val project: Project) : Configurable {
             .addComponent(JBLabel("工具类方法名用于推断 HTTP 方法，首个参数用于解析 URL。"))
             .addLabeledComponent(JBLabel("自定义 MQ 生产者注解："), JScrollPane(customMqProducerAnnotations))
             .addLabeledComponent(JBLabel("自定义 MQ 消费者注解："), JScrollPane(customMqConsumerAnnotations))
-            .addComponent(JBLabel("支持注解短名或完整类名；默认保留 JSH RabbitMQ 规则。"))
+            .addLabeledComponent(JBLabel("自定义 MQ 生产者类："), JScrollPane(customMqProducerClasses))
+            .addLabeledComponent(JBLabel("自定义 MQ 消费者接口："), JScrollPane(customMqConsumerInterfaces))
+            .addComponent(JBLabel("支持短名或完整类名；默认保留 JSH RabbitMQ 注解和 JSH RocketMQ 包装器规则。"))
             .addLabeledComponent(JBLabel("本地服务目录："), localServiceDirectories)
             .addComponentFillVertically(JPanel(BorderLayout()), 0)
             .panel.also { component = it }
@@ -79,6 +91,8 @@ class ChainAuditConfigurable(private val project: Project) : Configurable {
             normalizedPrefixes(customHttpClientClasses.text) != normalizedPrefixes(state.customHttpClientClasses) ||
             normalizedPrefixes(customMqProducerAnnotations.text) != normalizedPrefixes(state.customMqProducerAnnotations) ||
             normalizedPrefixes(customMqConsumerAnnotations.text) != normalizedPrefixes(state.customMqConsumerAnnotations) ||
+            normalizedPrefixes(customMqProducerClasses.text) != normalizedPrefixes(state.customMqProducerClasses) ||
+            normalizedPrefixes(customMqConsumerInterfaces.text) != normalizedPrefixes(state.customMqConsumerInterfaces) ||
             localServiceDirectories.text.trim() != state.localServiceDirectories.trim()
     }
 
@@ -93,6 +107,8 @@ class ChainAuditConfigurable(private val project: Project) : Configurable {
         state.customHttpClientClasses = normalizedPrefixes(customHttpClientClasses.text).joinToString(",")
         state.customMqProducerAnnotations = normalizedPrefixes(customMqProducerAnnotations.text).joinToString(",")
         state.customMqConsumerAnnotations = normalizedPrefixes(customMqConsumerAnnotations.text).joinToString(",")
+        state.customMqProducerClasses = normalizedPrefixes(customMqProducerClasses.text).joinToString(",")
+        state.customMqConsumerInterfaces = normalizedPrefixes(customMqConsumerInterfaces.text).joinToString(",")
         state.localServiceDirectories = localServiceDirectories.text.trim()
     }
 
@@ -107,6 +123,8 @@ class ChainAuditConfigurable(private val project: Project) : Configurable {
         customHttpClientClasses.text = normalizedPrefixes(state.customHttpClientClasses).joinToString("\n")
         customMqProducerAnnotations.text = normalizedPrefixes(state.customMqProducerAnnotations).joinToString("\n")
         customMqConsumerAnnotations.text = normalizedPrefixes(state.customMqConsumerAnnotations).joinToString("\n")
+        customMqProducerClasses.text = normalizedPrefixes(state.customMqProducerClasses).joinToString("\n")
+        customMqConsumerInterfaces.text = normalizedPrefixes(state.customMqConsumerInterfaces).joinToString("\n")
         localServiceDirectories.text = state.localServiceDirectories
     }
 

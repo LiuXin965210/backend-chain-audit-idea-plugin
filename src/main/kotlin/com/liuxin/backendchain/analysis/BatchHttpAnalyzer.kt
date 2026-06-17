@@ -18,7 +18,13 @@ class BatchHttpAnalyzer(
         if (!input.startsWith('/')) {
             return BatchAnalysisRow(index, input, BatchRowStatus.SKIPPED, "不是 HTTP 路径")
         }
-        val locator = EntryPointLocator(project, options.customMqProducerAnnotations, options.customMqConsumerAnnotations)
+        val locator = EntryPointLocator(
+            project,
+            options.customMqProducerAnnotations,
+            options.customMqConsumerAnnotations,
+            options.customMqProducerClasses,
+            options.customMqConsumerInterfaces
+        )
         val entries = locator.byHttpPath(input)
         if (entries.isEmpty()) {
             return BatchAnalysisRow(index, input, BatchRowStatus.SKIPPED, "未定位到接口")
@@ -72,6 +78,11 @@ class BatchHttpAnalyzer(
 
 internal fun defaultExtractors(options: AnalysisOptions): List<ResourceExtractor> = listOf(
     MyBatisExtractor(), MyBatisPlusExtractor(), JpaExtractor(),
-    InfrastructureExtractor(options.customMqProducerAnnotations, options.customMqConsumerAnnotations),
+    InfrastructureExtractor(
+        options.customMqProducerAnnotations,
+        options.customMqConsumerAnnotations,
+        options.customMqProducerClasses,
+        options.customMqConsumerInterfaces
+    ),
     ExternalHttpExtractor(options.customHttpClientClassPrefixes)
 )

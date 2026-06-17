@@ -17,7 +17,9 @@ data class LocatedEntry(val entry: EntryPoint, val method: PsiMethod)
 class EntryPointLocator(
     private val project: Project,
     private val customMqProducerAnnotations: List<String> = listOf("JshRabbitProducer"),
-    private val customMqConsumerAnnotations: List<String> = listOf("JshRabbitConsumer")
+    private val customMqConsumerAnnotations: List<String> = listOf("JshRabbitConsumer"),
+    private val customMqProducerClasses: List<String> = listOf("jsh.mgt.lib.rocketmq.producer.JshRocketMqProducer"),
+    private val customMqConsumerInterfaces: List<String> = listOf("jsh.mgt.lib.rocketmq.consumer.JshRocketMqListener")
 ) {
     private val mappings = listOf("GetMapping", "PostMapping", "PutMapping", "DeleteMapping", "PatchMapping", "RequestMapping")
 
@@ -50,7 +52,12 @@ class EntryPointLocator(
         consumerTopic(method)?.takeIf { matchesTopic(it, topic, expectedTopic) }?.let {
             return@mapNotNull LocatedEntry(EntryPoint(EntryType.MQ, topic, pathOrTopic = topic), method)
         }
-        val extractor = InfrastructureExtractor(customMqProducerAnnotations, customMqConsumerAnnotations)
+        val extractor = InfrastructureExtractor(
+            customMqProducerAnnotations,
+            customMqConsumerAnnotations,
+            customMqProducerClasses,
+            customMqConsumerInterfaces
+        )
         val contexts = sequenceOf(CallContext(method, null, method, text)) +
             findMethodCalls(method).asSequence()
                 .filter { it.methodExpression.referenceName == "subscribe" }
@@ -88,8 +95,16 @@ class EntryPointLocator(
         return if (selector.isNullOrBlank() || selector == "*") topic else "$topic:$selector"
     }
 
-    private fun matchesTopic(candidate: String, topic: String, expectedTopic: String): Boolean =
-        candidate == topic || candidate == expectedTopic || candidate.substringBefore(':') == expectedTopic
+    private fun matchesTopic(candidate: String, topic: String, expectedTopic: String): Boolean {
+        val candidateTopic = candidate.substringBefore(':')
+        return candidate == topic ||
+            candidate == expectedTopic ||
+            candidateTopic == expectedTopic ||
+            topicKey(candidateTopic) == topicKey(expectedTopic)
+    }
+
+    private fun topicKey(value: String): String =
+        value.removeSurrounding("\${", "}").substringAfterLast('.')
 
     private fun matchesConfiguredAnnotation(annotation: PsiAnnotation, configured: List<String>): Boolean {
         val qualifiedName = annotation.qualifiedName.orEmpty()

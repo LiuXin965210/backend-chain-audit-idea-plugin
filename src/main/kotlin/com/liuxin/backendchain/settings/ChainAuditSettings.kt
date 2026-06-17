@@ -16,6 +16,8 @@ class ChainAuditSettings : PersistentStateComponent<ChainAuditSettings.State> {
         var customHttpClientClasses: String = "jsh.mgt.lib.http.BasicHttpUtil",
         var customMqProducerAnnotations: String = "JshRabbitProducer",
         var customMqConsumerAnnotations: String = "JshRabbitConsumer",
+        var customMqProducerClasses: String = "jsh.mgt.lib.rocketmq.producer.JshRocketMqProducer",
+        var customMqConsumerInterfaces: String = "jsh.mgt.lib.rocketmq.consumer.JshRocketMqListener",
         var localServiceDirectories: String = ""
     )
 
@@ -35,6 +37,10 @@ class ChainAuditSettings : PersistentStateComponent<ChainAuditSettings.State> {
         customMqProducerAnnotations = state.customMqProducerAnnotations.split(',', '\n', '\r')
             .map(String::trim).filter(String::isNotEmpty),
         customMqConsumerAnnotations = state.customMqConsumerAnnotations.split(',', '\n', '\r')
+            .map(String::trim).filter(String::isNotEmpty),
+        customMqProducerClasses = state.customMqProducerClasses.split(',', '\n', '\r')
+            .map(String::trim).filter(String::isNotEmpty),
+        customMqConsumerInterfaces = state.customMqConsumerInterfaces.split(',', '\n', '\r')
             .map(String::trim).filter(String::isNotEmpty)
     )
 }

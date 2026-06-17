@@ -62,7 +62,18 @@ JAVA_HOME="/Applications/IntelliJ IDEA.app/Contents/jbr/Contents/Home" ./gradlew
 ## 发版注意
 
 - 升版本时先确认当前 `gradle.properties`、已有 `build/distributions/` 包和远端 `main` 状态。
-- 小功能递增补丁/小版本；用户明确“升一个大版本”时可从 `0.2.5` 升到 `1.0.0`。
+- 版本号采用 `MAJOR.MINOR.PATCH` 规则，参考主流语义化版本管理：
+  - `PATCH`：兼容性修复、误报/漏报修正、文案说明、测试补充、性能小优化、构建脚本非破坏性调整。例如 `1.0.0 -> 1.0.1`。
+  - `MINOR`：向后兼容的新能力、新配置项、新导出字段、新识别规则、新 UI 操作，或明显增强但不破坏既有使用方式。例如 `1.0.1 -> 1.1.0`。
+  - `MAJOR`：破坏性变更、默认行为明显改变、配置格式不兼容、导出格式不兼容、最低 IDEA/JDK/Gradle 要求升级、移除已有功能或公开入口。例如 `1.1.0 -> 2.0.0`。
+- `0.x` 版本视为早期快速迭代：兼容性修复递增 `PATCH`，普通功能递增 `MINOR`；从 `0.x` 升到 `1.0.0` 只在用户明确要求稳定大版本、或功能边界已稳定并完成完整验证时执行。
+- 同一轮改动同时包含多类变化时，按最高影响级别调整版本；默认不跳版本、不使用预发布后缀，除非用户明确要求。
+- 不确定版本级别时，先列出变更影响和建议版本，向用户确认后再改 `pluginVersion`。
+- 每次调整版本后必须同步检查：
+  - `gradle.properties` 的 `pluginVersion`
+  - `README.md` 中相关功能描述
+  - `build/distributions/` 新包文件名
+  - zip 内部 jar 名称和 `META-INF/plugin.xml` 的 `<version>`
 - 发版说明中要给出：
   - 修改的版本号
   - 构建命令
