@@ -143,7 +143,7 @@ Kotlin 入口使用 [UAST](https://plugins.jetbrains.com/docs/intellij/uast.html
 - **过滤包前缀**：匹配的方法不会展示、统计或导出，例如 `java.`、`org.slf4j.`。
 - **沿本地 MQ 继续扫描**：根据 RabbitMQ、Kafka、RocketMQ 的生产 topic/queue 查找当前 IDEA Project 内的消费者。
 - **资源去重**：对全部资源类型按“类型 + 名称 + 操作”去重，并合并证据。
-- **HTTP 工具类前缀**：配置工程自定义 HTTP wrapper，例如 `jsh.mgt.lib.http.BasicHttpUtil`。
+- **HTTP 工具类前缀**：配置工程自定义 HTTP wrapper，例如 `jsh.mgt.lib.http.BasicHttpUtil`；调用 URL 支持从局部变量初始化表达式回溯，识别 `@Value` 字段和字符串拼接。
 - **自定义 MQ 生产者注解**：配置生产者字段注解短名或完整类名，读取 `queue/value/name`；默认启用 `JshRabbitProducer`。
 - **自定义 MQ 消费者注解**：配置消费者方法或类注解短名或完整类名，读取 `topics/topic/queues/queue/value/name`；默认启用 `JshRabbitConsumer`。
 - **隐藏简单访问器**：调用链默认过滤与实体字段对应的平凡 getter/setter，可在设置中关闭，不会屏蔽 `getOrderInfo` 等业务方法。
@@ -156,7 +156,7 @@ Kotlin 入口使用 [UAST](https://plugins.jetbrains.com/docs/intellij/uast.html
 - Java PSI 调用链、接口多实现、`@Qualifier`、`@Primary`、方法引用、自调用、模板方法和循环保护。
 - Spring MVC HTTP 路径、Kafka/RabbitMQ/RocketMQ topic/queue 入口。
 - MyBatis XML（含 `<include>`）、MyBatis-Plus 常用 CRUD、MyBatis Generator Example、JPA Repository、Native SQL 和 JSqlParser 表提取。
-- Redis、Spring Cache、标准 Rabbit/Kafka/RocketMQ、阿里云 ONS、自定义 MQ 注解、Feign 和可配置 HTTP 工具类。
+- Redis、Spring Cache、标准 Rabbit/Kafka/RocketMQ、阿里云 ONS、自定义 MQ 注解、Feign 和可配置 HTTP 工具类，HTTP URL 支持常量、`@Value` 字段和局部变量拼接。
 - 资源筛选、排序、全类型去重、源码跳转，以及 Markdown 总览、CSV 明细和 Mermaid 导出。
 - 批量 HTTP 接口统计，支持 Markdown/CSV 导出、严格接口定位、interface 唯一实现分析、跳过原因标注和可取消后台进度。
 

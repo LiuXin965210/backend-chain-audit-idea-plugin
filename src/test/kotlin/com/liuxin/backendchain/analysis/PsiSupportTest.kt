@@ -156,6 +156,58 @@ class PsiSupportTest : BasePlatformTestCase() {
         assertEquals("POST \${replenish.jsh.open-api-prefix}/btbrrs/jsh-zhilian/api/popsc/receive", resource.name)
     }
 
+    fun testExtractsHttpClientUrlFromLocalVariableInitializer() {
+        myFixture.configureByText(
+            "Value.java",
+            """
+                package org.springframework.beans.factory.annotation;
+                public @interface Value { String value(); }
+            """.trimIndent()
+        )
+        myFixture.configureByText(
+            "SpringCloudInnerUtil.java",
+            """
+                package jsh.mgt.lib.http.inner;
+                public class SpringCloudInnerUtil {
+                    public static Object postForObject(String url, Object body, Object typeReference) { return null; }
+                }
+            """.trimIndent()
+        )
+        myFixture.configureByText(
+            "StockClient.java",
+            """
+                package com.yilihuo.cloud.service.order.feign;
+                import jsh.mgt.lib.http.inner.SpringCloudInnerUtil;
+                import org.springframework.beans.factory.annotation.Value;
+
+                class StockClient {
+                    @Value("${'$'}{ylh.cloud.service.stock}") String prefix;
+                    @Value("${'$'}{ylh.cloud.gateway}") String gateway;
+
+                    Object confirmReceivingGoodsByOrderCode(Object paramsDto) {
+                        String requestMapping = "/api/inner/stock/receiving-goods-management/"
+                            + "confirm-receiving-goods-by-order-code";
+                        String url = gateway + "/" + prefix + requestMapping;
+                        return SpringCloudInnerUtil.postForObject(url, paramsDto, null);
+                    }
+                }
+            """.trimIndent()
+        )
+
+        val method = findClass("com.yilihuo.cloud.service.order.feign.StockClient")
+            .findMethodsByName("confirmReceivingGoodsByOrderCode", false)
+            .single()
+        val call = PsiTreeUtil.findChildOfType(method.body, PsiMethodCallExpression::class.java)!!
+        val resource = ExternalHttpExtractor(listOf("jsh.mgt.lib.http.inner.SpringCloudInnerUtil"))
+            .extract(CallContext(method, call, call.resolveMethod(), call.text)).single()
+
+        assertEquals(
+            "POST \${ylh.cloud.gateway}/\${ylh.cloud.service.stock}/api/inner/stock/receiving-goods-management/confirm-receiving-goods-by-order-code",
+            resource.name
+        )
+        assertEquals(Confidence.INFERRED, resource.confidence)
+    }
+
     fun testFeignUsesExplicitValueWhenNameHasEmptyDefault() {
         myFixture.configureByText(
             "FeignAnnotations.java",

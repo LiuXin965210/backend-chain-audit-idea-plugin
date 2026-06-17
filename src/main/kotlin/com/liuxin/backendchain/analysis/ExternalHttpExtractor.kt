@@ -4,6 +4,7 @@ import com.intellij.psi.PsiAnnotation
 import com.intellij.psi.PsiExpression
 import com.intellij.psi.PsiField
 import com.intellij.psi.PsiLiteralExpression
+import com.intellij.psi.PsiLocalVariable
 import com.intellij.psi.PsiPolyadicExpression
 import com.intellij.psi.PsiReferenceExpression
 import com.intellij.psi.SmartPointerManager
@@ -60,17 +61,20 @@ class ExternalHttpExtractor(
         else -> "未声明"
     }
 
-    private fun httpUrl(expression: PsiExpression?): String? = when (expression) {
-        null -> null
-        is PsiLiteralExpression -> expression.value as? String
-        is PsiReferenceExpression -> {
-            constantString(expression) ?: (expression.resolve() as? PsiField)?.let { field ->
-                annotationString(field.annotations.firstOrNull {
+    private fun httpUrl(expression: PsiExpression?, depth: Int = 0): String? = when {
+        depth > 6 -> null
+        expression == null -> null
+        expression is PsiLiteralExpression -> expression.value as? String
+        expression is PsiReferenceExpression -> {
+            constantString(expression) ?: when (val resolved = expression.resolve()) {
+                is PsiLocalVariable -> httpUrl(resolved.initializer, depth + 1)
+                is PsiField -> annotationString(resolved.annotations.firstOrNull {
                     it.qualifiedName?.endsWith(".Value") == true || it.nameReferenceElement?.referenceName == "Value"
                 }, "value")
+                else -> null
             }
         }
-        is PsiPolyadicExpression -> expression.operands.mapNotNull(::httpUrl).joinToString("").ifBlank { null }
+        expression is PsiPolyadicExpression -> expression.operands.mapNotNull { httpUrl(it, depth + 1) }.joinToString("").ifBlank { null }
         else -> constantString(expression)
     }
 
