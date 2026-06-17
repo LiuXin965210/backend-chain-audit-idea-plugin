@@ -22,6 +22,7 @@
         <toolWindow id="Backend Chain Audit"
                     anchor="bottom"
                     factoryClass="com.liuxin.backendchain.ui.ChainAuditToolWindowFactory"/>
+        <backgroundPostStartupActivity implementation="com.liuxin.backendchain.silent.SilentTaskStartupActivity"/>
     </extensions>
 
     <actions>
