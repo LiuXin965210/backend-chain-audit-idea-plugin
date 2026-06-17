@@ -56,6 +56,53 @@ class ChainAnalysisService(private val project: Project) {
         EntryPointLocator(project, options.customMqProducerAnnotations, options.customMqConsumerAnnotations).byMqTopic(topic)
     }
 
+    fun analyzeHttpPathSilently(path: String, options: AnalysisOptions = AnalysisOptions()): AnalysisResult =
+        locateAndAnalyzeResult("HTTP $path", EntryType.HTTP, options) {
+            EntryPointLocator(project, options.customMqProducerAnnotations, options.customMqConsumerAnnotations).byHttpPath(path)
+        }
+
+    fun analyzeMqTopicSilently(topic: String, options: AnalysisOptions = AnalysisOptions()): AnalysisResult =
+        locateAndAnalyzeResult("MQ $topic", EntryType.MQ, options) {
+            EntryPointLocator(project, options.customMqProducerAnnotations, options.customMqConsumerAnnotations).byMqTopic(topic)
+        }
+
+    fun analyzeBatchHttpPathsSilently(
+        inputs: List<String>,
+        options: AnalysisOptions = AnalysisOptions(),
+        onProgress: (Int, Int, String) -> Unit = { _, _, _ -> }
+    ): BatchAnalysisReport {
+        val rows = mutableListOf<BatchAnalysisRow>()
+        var canceled = false
+        try {
+            val analyzer = BatchHttpAnalyzer(project, options)
+            inputs.forEachIndexed { offset, raw ->
+                ProgressManager.checkCanceled()
+                val index = offset + 1
+                val input = raw.trim()
+                onProgress(index, inputs.size, input)
+                rows += ReadAction.nonBlocking<BatchAnalysisRow> {
+                    analyzer.analyzeRow(index, input)
+                }
+                    .inSmartMode(project)
+                    .expireWith(project)
+                    .submit(AppExecutorUtil.getAppExecutorService())
+                    .get()
+            }
+        } catch (e: ProcessCanceledException) {
+            canceled = true
+        } catch (e: Throwable) {
+            val cause = e.cause ?: e
+            LOG.warn("Backend chain batch analysis failed", cause)
+            rows += BatchAnalysisRow(
+                rows.size + 1,
+                "<批量任务>",
+                BatchRowStatus.FAILED,
+                cause.message ?: cause.javaClass.simpleName
+            )
+        }
+        return BatchAnalysisReport(rows.toList(), canceled)
+    }
+
     fun analyzeBatchHttpPaths(
         inputs: List<String>,
         csvFile: File?,
@@ -64,62 +111,33 @@ class ChainAnalysisService(private val project: Project) {
     ) {
         publishStatus(AnalysisStatus("批量统计等待 IDEA 索引并开始扫描...", running = true))
         object : Task.Backgroundable(project, "批量统计 HTTP 接口", true) {
-            private val rows = mutableListOf<BatchAnalysisRow>()
-
             override fun run(indicator: ProgressIndicator) {
                 indicator.isIndeterminate = false
-                var canceled = false
+                val report = analyzeBatchHttpPathsSilently(inputs, options) { index, total, input ->
+                    updateBatchProgress(indicator, index, total, input)
+                    indicator.fraction = index.toDouble() / total.coerceAtLeast(1)
+                }
+                indicator.fraction = 1.0
                 try {
-                    val analyzer = BatchHttpAnalyzer(project, options)
-                    inputs.forEachIndexed { offset, raw ->
-                        ProgressManager.checkCanceled()
-                        val index = offset + 1
-                        val input = raw.trim()
-                        updateBatchProgress(indicator, index, inputs.size, input)
-                        rows += ReadAction.nonBlocking<BatchAnalysisRow> {
-                            analyzer.analyzeRow(index, input)
-                        }
-                            .inSmartMode(project)
-                            .expireWith(project)
-                            .submit(AppExecutorUtil.getAppExecutorService())
-                            .get()
-                        indicator.fraction = index.toDouble() / inputs.size.coerceAtLeast(1)
-                    }
-                    indicator.fraction = 1.0
-                } catch (e: ProcessCanceledException) {
-                    canceled = true
+                    csvFile?.writeText(ResultExporter.batchCsv(report))
+                    markdownFile?.writeText(ResultExporter.batchMarkdown(report))
+                    val suffix = if (report.canceled) "，用户取消，已导出完成部分" else "，扫描完成"
+                    publishStatus(
+                        AnalysisStatus(
+                            "批量统计$suffix：${exportedFiles(csvFile, markdownFile)}",
+                            running = false
+                        )
+                    )
                 } catch (e: Throwable) {
                     val cause = e.cause ?: e
-                    LOG.warn("Backend chain batch analysis failed", cause)
-                    rows += BatchAnalysisRow(
-                        rows.size + 1,
-                        "<批量任务>",
-                        BatchRowStatus.FAILED,
-                        cause.message ?: cause.javaClass.simpleName
+                    LOG.warn("Backend chain batch export failed", cause)
+                    publishStatus(
+                        AnalysisStatus(
+                            "批量统计导出失败：${cause.message ?: cause.javaClass.simpleName}",
+                            running = false,
+                            error = true
+                        )
                     )
-                } finally {
-                    val report = BatchAnalysisReport(rows.toList(), canceled)
-                    try {
-                        csvFile?.writeText(ResultExporter.batchCsv(report))
-                        markdownFile?.writeText(ResultExporter.batchMarkdown(report))
-                        val suffix = if (canceled) "，用户取消，已导出完成部分" else "，扫描完成"
-                        publishStatus(
-                            AnalysisStatus(
-                                "批量统计$suffix：${exportedFiles(csvFile, markdownFile)}",
-                                running = false
-                            )
-                        )
-                    } catch (e: Throwable) {
-                        val cause = e.cause ?: e
-                        LOG.warn("Backend chain batch export failed", cause)
-                        publishStatus(
-                            AnalysisStatus(
-                                "批量统计导出失败：${cause.message ?: cause.javaClass.simpleName}",
-                                running = false,
-                                error = true
-                            )
-                        )
-                    }
                 }
             }
         }.queue()
@@ -141,18 +159,26 @@ class ChainAnalysisService(private val project: Project) {
 
     private fun locateAndAnalyze(label: String, options: AnalysisOptions, locate: () -> List<LocatedEntry>) {
         runBackground("定位 $label") {
-            val entries = locate()
-            if (entries.isEmpty()) {
-                AnalysisResult(
-                    EntryPoint(if (label.startsWith("HTTP")) EntryType.HTTP else EntryType.MQ, label),
-                    CallGraph("", emptyMap(), emptyList()), emptyList(),
-                    listOf(AnalysisWarning("未找到入口：$label"))
-                )
-            } else {
-                val results = entries.map { CallGraphAnalyzer(project, options, defaultExtractors(options)).analyze(it.entry, it.method) }
-                merge(results, options)
-            }
+            locateAndAnalyzeResult(label, if (label.startsWith("HTTP")) EntryType.HTTP else EntryType.MQ, options, locate)
         }
+    }
+
+    private fun locateAndAnalyzeResult(
+        label: String,
+        entryType: EntryType,
+        options: AnalysisOptions,
+        locate: () -> List<LocatedEntry>
+    ): AnalysisResult {
+        val entries = locate()
+        if (entries.isEmpty()) {
+            return AnalysisResult(
+                EntryPoint(entryType, label),
+                CallGraph("", emptyMap(), emptyList()), emptyList(),
+                listOf(AnalysisWarning("未找到入口：$label"))
+            )
+        }
+        val results = entries.map { CallGraphAnalyzer(project, options, defaultExtractors(options)).analyze(it.entry, it.method) }
+        return merge(results, options)
     }
 
     private fun runBackground(title: String, action: () -> AnalysisResult) {

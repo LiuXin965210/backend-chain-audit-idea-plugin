@@ -134,6 +134,59 @@ Kotlin 入口使用 [UAST](https://plugins.jetbrains.com/docs/intellij/uast.html
 - 成功但无资源的接口仍输出入口摘要。
 - 跳过和失败的行会明确写出原因，资源列留空。
 
+### Headless 命令行审计
+
+插件提供 `backend-chain-audit` 命令行入口，可在不打开 IDEA 图形界面的情况下启动 IntelliJ Platform，加载指定 Project 后执行审计任务。
+
+```bash
+idea backend-chain-audit \
+  --project /path/to/java-project \
+  --task /path/to/task.json \
+  --summary build/backend-chain-audit/summary.json
+```
+
+任务文件示例：
+
+```json
+{
+  "tasks": [
+    {
+      "type": "http",
+      "input": "/api/order/save",
+      "outputs": {
+        "markdown": "build/backend-chain-audit/order-save.md",
+        "csv": "build/backend-chain-audit/order-save.csv",
+        "mermaid": "build/backend-chain-audit/order-save.mmd"
+      }
+    },
+    {
+      "type": "mq",
+      "input": "order.topic",
+      "outputs": {
+        "markdown": "build/backend-chain-audit/order-topic.md"
+      }
+    },
+    {
+      "type": "batchHttp",
+      "inputs": ["/api/order/save", "/api/order/detail"],
+      "outputs": {
+        "markdown": "build/backend-chain-audit/batch.md",
+        "csv": "build/backend-chain-audit/batch.csv"
+      }
+    }
+  ]
+}
+```
+
+约束：
+
+- `type` 支持 `http`、`mq`、`batchHttp`。
+- 单条 `http` 和 `mq` 支持导出 `markdown`、`csv`、`mermaid`。
+- `batchHttp` 支持导出 `markdown` 和 `csv`，不支持 `mermaid`。
+- 相对输出路径按 `--project` 目录解析；绝对路径会按原路径写入。
+- 任务文件不会被重命名或删除，便于 CI 和本地脚本重复执行。
+- 全部成功时命令返回 `0`；任务解析失败、项目打开失败或任一任务失败时返回非 `0`。
+
 ## 配置
 
 - **最大方法递归深度**：限制递归层数，防止超大调用图持续扩张。

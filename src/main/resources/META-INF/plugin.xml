@@ -22,6 +22,8 @@
         <toolWindow id="Backend Chain Audit"
                     anchor="bottom"
                     factoryClass="com.liuxin.backendchain.ui.ChainAuditToolWindowFactory"/>
+        <appStarter implementation="com.liuxin.backendchain.headless.BackendChainAuditStarter"
+                    commandName="backend-chain-audit"/>
     </extensions>
 
     <actions>
