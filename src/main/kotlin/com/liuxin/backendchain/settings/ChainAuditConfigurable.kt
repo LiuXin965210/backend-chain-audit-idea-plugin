@@ -26,6 +26,7 @@ class ChainAuditConfigurable(private val project: Project) : Configurable {
     private val followMq = JBCheckBox("沿本地 RabbitMQ/Kafka/RocketMQ topic 继续定位消费者")
     private val deduplicateResources = JBCheckBox("对所有资源类型去重")
     private val hideSimpleAccessors = JBCheckBox("隐藏简单 getter/setter 调用")
+    private val followConcreteOverrides = JBCheckBox("跟踪普通方法的子类覆写候选")
     private val customHttpClientClasses = JBTextArea(4, 48).apply {
         lineWrap = true
         wrapStyleWord = true
@@ -68,6 +69,8 @@ class ChainAuditConfigurable(private val project: Project) : Configurable {
             .addComponent(deduplicateResources)
             .addComponent(hideSimpleAccessors)
             .addComponent(JBLabel("仅隐藏与类字段对应的平凡访问器，不影响 getOrderInfo 等业务方法。"))
+            .addComponent(followConcreteOverrides)
+            .addComponent(JBLabel("关闭时仍会展开接口和抽象方法实现，但不对普通 public/protected 方法做全项目子类覆写搜索。"))
             .addLabeledComponent(JBLabel("HTTP 工具类前缀："), JScrollPane(customHttpClientClasses))
             .addComponent(JBLabel("工具类方法名用于推断 HTTP 方法，首个参数用于解析 URL。"))
             .addLabeledComponent(JBLabel("自定义 MQ 生产者注解："), JScrollPane(customMqProducerAnnotations))
@@ -88,6 +91,7 @@ class ChainAuditConfigurable(private val project: Project) : Configurable {
             followMq.isSelected != state.followLocalMqConsumers ||
             deduplicateResources.isSelected != state.deduplicateResources ||
             hideSimpleAccessors.isSelected != state.hideSimpleAccessors ||
+            followConcreteOverrides.isSelected != state.followConcreteMethodOverrides ||
             normalizedPrefixes(customHttpClientClasses.text) != normalizedPrefixes(state.customHttpClientClasses) ||
             normalizedPrefixes(customMqProducerAnnotations.text) != normalizedPrefixes(state.customMqProducerAnnotations) ||
             normalizedPrefixes(customMqConsumerAnnotations.text) != normalizedPrefixes(state.customMqConsumerAnnotations) ||
@@ -104,6 +108,7 @@ class ChainAuditConfigurable(private val project: Project) : Configurable {
         state.followLocalMqConsumers = followMq.isSelected
         state.deduplicateResources = deduplicateResources.isSelected
         state.hideSimpleAccessors = hideSimpleAccessors.isSelected
+        state.followConcreteMethodOverrides = followConcreteOverrides.isSelected
         state.customHttpClientClasses = normalizedPrefixes(customHttpClientClasses.text).joinToString(",")
         state.customMqProducerAnnotations = normalizedPrefixes(customMqProducerAnnotations.text).joinToString(",")
         state.customMqConsumerAnnotations = normalizedPrefixes(customMqConsumerAnnotations.text).joinToString(",")
@@ -120,6 +125,7 @@ class ChainAuditConfigurable(private val project: Project) : Configurable {
         followMq.isSelected = state.followLocalMqConsumers
         deduplicateResources.isSelected = state.deduplicateResources
         hideSimpleAccessors.isSelected = state.hideSimpleAccessors
+        followConcreteOverrides.isSelected = state.followConcreteMethodOverrides
         customHttpClientClasses.text = normalizedPrefixes(state.customHttpClientClasses).joinToString("\n")
         customMqProducerAnnotations.text = normalizedPrefixes(state.customMqProducerAnnotations).joinToString("\n")
         customMqConsumerAnnotations.text = normalizedPrefixes(state.customMqConsumerAnnotations).joinToString("\n")

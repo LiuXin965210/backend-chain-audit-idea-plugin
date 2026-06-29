@@ -13,6 +13,7 @@ class ChainAuditSettings : PersistentStateComponent<ChainAuditSettings.State> {
         var followLocalMqConsumers: Boolean = true,
         var deduplicateResources: Boolean = false,
         var hideSimpleAccessors: Boolean = true,
+        var followConcreteMethodOverrides: Boolean = false,
         var customHttpClientClasses: String = "jsh.mgt.lib.http.BasicHttpUtil",
         var customMqProducerAnnotations: String = "JshRabbitProducer",
         var customMqConsumerAnnotations: String = "JshRabbitConsumer",
@@ -32,6 +33,7 @@ class ChainAuditSettings : PersistentStateComponent<ChainAuditSettings.State> {
         followLocalMqConsumers = state.followLocalMqConsumers,
         deduplicateResources = state.deduplicateResources,
         hideSimpleAccessors = state.hideSimpleAccessors,
+        followConcreteMethodOverrides = state.followConcreteMethodOverrides,
         customHttpClientClassPrefixes = state.customHttpClientClasses.split(',', '\n', '\r')
             .map(String::trim).filter(String::isNotEmpty),
         customMqProducerAnnotations = state.customMqProducerAnnotations.split(',', '\n', '\r')

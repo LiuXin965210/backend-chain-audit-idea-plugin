@@ -16,6 +16,7 @@ class CallGraphAnalyzer(
     private val resources = mutableListOf<ResourceRef>()
     private val warnings = mutableListOf<AnalysisWarning>()
     private val expanded = mutableSetOf<String>()
+    private val implementationCache = mutableMapOf<String, List<PsiMethod>>()
 
     fun analyze(entry: EntryPoint, root: PsiMethod): AnalysisResult {
         trace(root, 0, TracePath(listOf(root.ownerName() + "." + root.name)))
@@ -80,7 +81,13 @@ class CallGraphAnalyzer(
         depth: Int,
         path: TracePath
     ) {
-        val targets = resolveImplementations(project, resolved, call).ifEmpty { listOf(resolved) }
+        val targets = resolveImplementations(
+            project,
+            resolved,
+            call,
+            implementationCache,
+            options.followConcreteMethodOverrides
+        ).ifEmpty { listOf(resolved) }
             .filter(::shouldIncludeInGraph)
         val alternatives = targets.filter { it.methodKey() != resolved.methodKey() }
         alternatives.forEach { implementation ->

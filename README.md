@@ -48,9 +48,9 @@ Kotlin 入口使用 [UAST](https://plugins.jetbrains.com/docs/intellij/uast.html
 
 - 唯一实现：进入对应实现方法；
 - 多实现：保留所有静态候选，不擅自选择其中一个；
-- `@Qualifier`：按指定 Bean 名缩小候选；
+- `@Qualifier` / `@Resource(name/value)`：按指定 Bean 名缩小候选；
 - `@Primary`：存在唯一主实现时优先定位；
-- 模板方法：同时保留基类实现和可能执行的子类覆写；
+- 模板方法：默认保留 PSI 直接解析到的方法；开启普通方法覆写跟踪后，同时保留基类实现和可能执行的子类覆写；
 - 工厂或 `ApplicationContext.getBean()`：无法唯一确定时输出所有能够静态确认的分支。
 
 这类项目级查找依赖 IDEA 的索引和 PSI Stub。JetBrains 对相关机制的说明见 [Indexing and PSI Stubs](https://plugins.jetbrains.com/docs/intellij/indexing-and-psi-stubs.html) 和 [Stub Indexes](https://plugins.jetbrains.com/docs/intellij/stub-indexes.html)。
@@ -89,7 +89,7 @@ Kotlin 入口使用 [UAST](https://plugins.jetbrains.com/docs/intellij/uast.html
 
 扫描运行在可取消后台任务中，并通过 Non-Blocking Read Action 读取 PSI，避免阻塞 IDEA UI。相关线程规则见 [IntelliJ Platform Threading Model](https://plugins.jetbrains.com/docs/intellij/threading-model.html)。
 
-结果缓存包含 PSI 修改计数；源码发生变化后旧缓存自动失效并重新分析。源码跳转使用 Smart Pointer 保存证据位置，避免直接长期持有可能失效的 PSI 元素。
+结果缓存包含 PSI 修改计数；源码发生变化后旧缓存自动失效并重新分析。单次扫描会缓存接口实现解析结果，避免同一方法反复触发项目级实现查找；普通 concrete method 默认不做全项目子类覆写搜索。源码跳转使用 Smart Pointer 保存证据位置，避免直接长期持有可能失效的 PSI 元素。
 
 ## 使用
 
@@ -148,6 +148,7 @@ Kotlin 入口使用 [UAST](https://plugins.jetbrains.com/docs/intellij/uast.html
 - **过滤包前缀**：匹配的方法不会展示、统计或导出，例如 `java.`、`org.slf4j.`。
 - **沿本地 MQ 继续扫描**：根据 RabbitMQ、Kafka、RocketMQ 的生产 topic/queue 查找当前 IDEA Project 内的消费者。
 - **资源去重**：对全部资源类型按“类型 + 名称 + 操作”去重，并合并证据。
+- **跟踪普通方法覆写候选**：默认关闭；开启后会对普通 public/protected 方法查找子类覆写分支，适合模板方法模式，但在大工程中会增加索引查询成本。
 - **HTTP 工具类前缀**：配置工程自定义 HTTP wrapper，例如 `jsh.mgt.lib.http.BasicHttpUtil`；调用 URL 支持从局部变量初始化表达式回溯，识别 `@Value` 字段和字符串拼接。
 - **自定义 MQ 生产者注解**：配置生产者字段注解短名或完整类名，读取 `queue/value/name`；默认启用 `JshRabbitProducer`。
 - **自定义 MQ 消费者注解**：配置消费者方法或类注解短名或完整类名，读取 `topics/topic/queues/queue/value/name`；默认启用 `JshRabbitConsumer`。
@@ -160,7 +161,7 @@ Kotlin 入口使用 [UAST](https://plugins.jetbrains.com/docs/intellij/uast.html
 
 ## 当前覆盖
 
-- Java PSI 调用链、接口多实现、`@Qualifier`、`@Primary`、方法引用、自调用、模板方法和循环保护。
+- Java PSI 调用链、接口多实现、`@Qualifier`、`@Resource(name/value)`、`@Primary`、方法引用、自调用、模板方法和循环保护。
 - Spring MVC HTTP 路径、Kafka/RabbitMQ/RocketMQ topic/queue 入口。
 - MyBatis XML（含 `<include>`）、MyBatis-Plus 常用 CRUD、MyBatis Generator Example、JPA Repository、Native SQL 和 JSqlParser 表提取。
 - Redis、Spring Cache、标准 Rabbit/Kafka/RocketMQ、阿里云 ONS、`JshRocketMqProducer` / `JshRocketMqListener` 包装器、自定义 MQ 注解、Feign 和可配置 HTTP 工具类，HTTP URL 支持常量、`@Value` 字段和局部变量拼接。

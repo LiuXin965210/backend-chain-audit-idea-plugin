@@ -52,10 +52,28 @@ internal fun findMethodCalls(method: PsiMethod): Collection<PsiMethodCallExpress
 internal fun findMethodReferences(method: PsiMethod): Collection<PsiMethodReferenceExpression> =
     PsiTreeUtil.findChildrenOfType(method.body, PsiMethodReferenceExpression::class.java)
 
-internal fun resolveImplementations(project: Project, method: PsiMethod, call: PsiMethodCallExpression? = null): List<PsiMethod> {
+internal fun resolveImplementations(
+    project: Project,
+    method: PsiMethod,
+    call: PsiMethodCallExpression? = null,
+    cache: MutableMap<String, List<PsiMethod>>? = null,
+    includeConcreteOverrides: Boolean = true
+): List<PsiMethod> {
+    val qualifier = beanQualifier(call)
+    val cacheKey = method.methodKey() + "|" + qualifier.orEmpty() + "|$includeConcreteOverrides"
+    return cache?.getOrPut(cacheKey) { resolveImplementations(project, method, qualifier, includeConcreteOverrides) }
+        ?: resolveImplementations(project, method, qualifier, includeConcreteOverrides)
+}
+
+private fun resolveImplementations(
+    project: Project,
+    method: PsiMethod,
+    qualifier: String?,
+    includeConcreteOverrides: Boolean
+): List<PsiMethod> {
     val owner = method.containingClass ?: return emptyList()
     if (!owner.isInterface && !method.hasModifierProperty(PsiModifier.ABSTRACT)) {
-        if (!isVirtual(method)) return listOf(method)
+        if (!includeConcreteOverrides || !isVirtual(method)) return listOf(method)
         val overrides = ClassInheritorsSearch.search(owner, GlobalSearchScope.projectScope(project), true)
             .findAll()
             .flatMap { inheritor ->
@@ -72,19 +90,25 @@ internal fun resolveImplementations(project: Project, method: PsiMethod, call: P
         .distinctBy { it.methodKey() }
     if (implementations.size <= 1) return implementations
 
-    val reference = call?.methodExpression?.qualifierExpression as? PsiReferenceExpression
-    val injectionPoint = reference?.resolve()
-    val qualifier = when (injectionPoint) {
-        is PsiField -> annotationString(injectionPoint.annotations.firstOrNull { it.nameReferenceElement?.referenceName == "Qualifier" }, "value")
-        is PsiParameter -> annotationString(injectionPoint.annotations.firstOrNull { it.nameReferenceElement?.referenceName == "Qualifier" }, "value")
-        else -> null
-    }
     if (qualifier != null) {
         implementations.filter { beanName(it.containingClass) == qualifier }.takeIf { it.isNotEmpty() }?.let { return it }
     }
     implementations.filter { annotation(it.containingClass, "Primary") != null }.takeIf { it.size == 1 }?.let { return it }
     return implementations
 }
+
+private fun beanQualifier(call: PsiMethodCallExpression?): String? {
+    val reference = call?.methodExpression?.qualifierExpression as? PsiReferenceExpression
+    return when (val injectionPoint = reference?.resolve()) {
+        is PsiField -> injectionQualifier(injectionPoint.annotations)
+        is PsiParameter -> injectionQualifier(injectionPoint.annotations)
+        else -> null
+    }
+}
+
+private fun injectionQualifier(annotations: Array<PsiAnnotation>): String? =
+    annotationString(annotations.firstOrNull { it.nameReferenceElement?.referenceName == "Qualifier" }, "value")
+        ?: annotationString(annotations.firstOrNull { it.nameReferenceElement?.referenceName == "Resource" }, "name", "value")
 
 private fun isVirtual(method: PsiMethod): Boolean =
     !method.isConstructor &&

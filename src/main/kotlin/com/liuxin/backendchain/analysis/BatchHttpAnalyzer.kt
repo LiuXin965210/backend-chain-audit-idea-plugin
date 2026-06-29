@@ -14,6 +14,8 @@ class BatchHttpAnalyzer(
     private val project: Project,
     private val options: AnalysisOptions
 ) {
+    private val implementationCache = mutableMapOf<String, List<PsiMethod>>()
+
     fun analyzeRow(index: Int, input: String): BatchAnalysisRow {
         if (!input.startsWith('/')) {
             return BatchAnalysisRow(index, input, BatchRowStatus.SKIPPED, "不是 HTTP 路径")
@@ -53,12 +55,12 @@ class BatchHttpAnalyzer(
         if (method.containingClass?.isInterface != true && !method.hasModifierProperty(PsiModifier.ABSTRACT)) {
             return method
         }
-        val implementations = resolveImplementations(project, method)
+        val implementations = resolveImplementations(project, method, cache = implementationCache)
         return implementations.singleOrNull()
     }
 
     private fun interfaceSkipReason(method: PsiMethod): String {
-        val implementations = resolveImplementations(project, method)
+        val implementations = resolveImplementations(project, method, cache = implementationCache)
         return if (implementations.isEmpty()) "interface 方法未找到实现" else "interface 方法存在多个实现"
     }
 

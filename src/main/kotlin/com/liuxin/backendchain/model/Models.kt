@@ -106,6 +106,7 @@ data class AnalysisOptions(
     val followLocalMqConsumers: Boolean = true,
     val deduplicateResources: Boolean = false,
     val hideSimpleAccessors: Boolean = true,
+    val followConcreteMethodOverrides: Boolean = false,
     val customHttpClientClassPrefixes: List<String> = listOf("jsh.mgt.lib.http.BasicHttpUtil"),
     val customMqProducerAnnotations: List<String> = listOf("JshRabbitProducer"),
     val customMqConsumerAnnotations: List<String> = listOf("JshRabbitConsumer"),

@@ -61,6 +61,39 @@ class PsiSupportTest : BasePlatformTestCase() {
         assertTrue(targets.none { it.containingClass?.name == "PlainService" })
     }
 
+    fun testConcreteMethodOverridesAreOptInForCallGraph() {
+        myFixture.configureByText(
+            "ConcreteOverrideServices.java",
+            """
+                class BaseService {
+                    void run() { save(); }
+                    protected void save() { baseRepo(); }
+                    void baseRepo() {}
+                }
+                class ChildService extends BaseService {
+                    @Override protected void save() { childRepo(); }
+                    void childRepo() {}
+                }
+            """.trimIndent()
+        )
+        val method = findClass("BaseService").findMethodsByName("run", false).single()
+        val extractor = object : ResourceExtractor {
+            override fun extract(context: CallContext): List<ResourceRef> {
+                val target = context.resolvedMethod ?: return emptyList()
+                if (target.name !in setOf("baseRepo", "childRepo")) return emptyList()
+                return listOf(ResourceRef(ResourceType.MYSQL, target.name, Operation.READ, Confidence.CONFIRMED, "repo", null))
+            }
+        }
+
+        val defaultResult = CallGraphAnalyzer(project, AnalysisOptions(), listOf(extractor))
+            .analyze(EntryPoint(EntryType.METHOD, "test"), method)
+        val optInResult = CallGraphAnalyzer(project, AnalysisOptions(followConcreteMethodOverrides = true), listOf(extractor))
+            .analyze(EntryPoint(EntryType.METHOD, "test"), method)
+
+        assertEquals(listOf("baseRepo"), defaultResult.resources.map { it.name })
+        assertEquals(setOf("baseRepo", "childRepo"), optInResult.resources.map { it.name }.toSet())
+    }
+
     fun testExcludedJdkCallsAreNotAddedToGraph() {
         myFixture.configureByText(
             "AuditService.java",
@@ -126,6 +159,57 @@ class PsiSupportTest : BasePlatformTestCase() {
         val targets = resolveImplementations(project, method)
 
         assertEquals(listOf("ReplenishServiceImpl"), targets.map { it.containingClass?.name })
+    }
+
+    fun testResourceNameNarrowsInterfaceImplementation() {
+        myFixture.configureByText(
+            "Resource.java",
+            """
+                package javax.annotation;
+                public @interface Resource {
+                    String name() default "";
+                    String value() default "";
+                }
+            """.trimIndent()
+        )
+        myFixture.configureByText(
+            "Service.java",
+            """
+                package org.springframework.stereotype;
+                public @interface Service {
+                    String value() default "";
+                }
+            """.trimIndent()
+        )
+        myFixture.configureByText(
+            "ResourceDispatch.java",
+            """
+                import javax.annotation.Resource;
+                import org.springframework.stereotype.Service;
+
+                interface AddService { void insert(); }
+                @Service("cloudAddService")
+                class CloudAddService implements AddService {
+                    @Override public void insert() {}
+                }
+                @Service("storeAddService")
+                class StoreAddService implements AddService {
+                    @Override public void insert() {}
+                }
+                class Controller {
+                    @Resource(name = "cloudAddService")
+                    private AddService service;
+                    void create() { service.insert(); }
+                }
+            """.trimIndent()
+        )
+
+        val method = findClass("Controller").findMethodsByName("create", false).single()
+        val call = PsiTreeUtil.findChildOfType(method.body, PsiMethodCallExpression::class.java)!!
+        val resolved = call.resolveMethod()!!
+        val targets = resolveImplementations(project, resolved, call)
+
+        assertEquals(listOf("CloudAddService"), targets.map { it.containingClass?.name })
     }
 
     fun testExtractsBasicHttpUtilConfiguredPrefixAndConstantPath() {
