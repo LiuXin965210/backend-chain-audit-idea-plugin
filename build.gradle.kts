@@ -1,4 +1,5 @@
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
+import org.jetbrains.kotlin.gradle.tasks.KotlinJvmCompile
 
 plugins {
     id("java")
@@ -25,22 +26,15 @@ dependencies {
     testImplementation("junit:junit:4.13.2")
 
     intellijPlatform {
-        local("/Applications/IntelliJ IDEA.app")
+        intellijIdeaUltimate(providers.gradleProperty("platformVersion").get())
         bundledPlugin("com.intellij.java")
         testFramework(org.jetbrains.intellij.platform.gradle.TestFrameworkType.Platform)
     }
 }
 
-kotlin {
-    compilerOptions {
-        jvmTarget.set(JvmTarget.JVM_21)
-        freeCompilerArgs.add("-Xjvm-default=all")
-    }
-}
-
 java {
-    sourceCompatibility = JavaVersion.VERSION_21
-    targetCompatibility = JavaVersion.VERSION_21
+    sourceCompatibility = JavaVersion.VERSION_17
+    targetCompatibility = JavaVersion.VERSION_17
 }
 
 intellijPlatform {
@@ -48,7 +42,7 @@ intellijPlatform {
         name = providers.gradleProperty("pluginName")
         version = providers.gradleProperty("pluginVersion")
         ideaVersion {
-            sinceBuild = "253"
+            sinceBuild = "233"
             untilBuild = "261.*"
         }
     }
@@ -61,6 +55,17 @@ intellijPlatform {
 }
 
 tasks {
+    withType<KotlinJvmCompile>().configureEach {
+        compilerOptions {
+            jvmTarget.set(JvmTarget.JVM_17)
+            freeCompilerArgs.add("-Xjvm-default=all")
+        }
+    }
+
+    withType<JavaCompile>().configureEach {
+        options.release.set(17)
+    }
+
     test {
         useJUnitPlatform()
     }

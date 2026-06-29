@@ -2,9 +2,9 @@
 
 IntelliJ IDEA 内部插件，从 Java/Spring 方法、HTTP 路径或 MQ topic 出发，静态分析调用链及其涉及的 MySQL、Redis、RabbitMQ、Kafka、RocketMQ 和外围 HTTP 接口。
 
-当前版本：`1.1.0`
+当前版本：`1.2.0`
 
-支持 IDEA 版本：`2025.3` 至 `2026.1.x`（IntelliJ Platform build `253` 到 `261.*`）。该范围来自 `build.gradle.kts` 中的 `sinceBuild = "253"` 和 `untilBuild = "261.*"` 配置；低于 `2025.3` 或高于 `2026.1.x` 的 IDEA 版本不会被当前插件声明为兼容。
+支持 IDEA 版本：`2023.3` 至 `2026.1.x`（IntelliJ Platform build `233` 到 `261.*`）。该范围来自 `build.gradle.kts` 中的 `platformVersion = 2023.3.8`、`sinceBuild = "233"` 和 `untilBuild = "261.*"` 配置；低于 `2023.3` 或高于 `2026.1.x` 的 IDEA 版本不会被当前插件声明为兼容。
 
 ## 为什么使用 IDEA 插件扫描
 
