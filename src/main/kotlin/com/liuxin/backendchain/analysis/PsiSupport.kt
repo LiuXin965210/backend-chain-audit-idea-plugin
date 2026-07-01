@@ -1,6 +1,7 @@
 package com.liuxin.backendchain.analysis
 
 import com.intellij.openapi.project.Project
+import com.intellij.openapi.progress.ProgressManager
 import com.intellij.psi.*
 import com.intellij.psi.search.GlobalSearchScope
 import com.intellij.psi.search.searches.ClassInheritorsSearch
@@ -8,12 +9,15 @@ import com.intellij.psi.util.MethodSignatureUtil
 import com.intellij.psi.util.PsiTreeUtil
 
 internal fun PsiMethod.methodKey(): String {
+    val projectId = project.basePath ?: project.name
     val owner = containingClass?.qualifiedName ?: containingFile?.virtualFile?.path ?: "<unknown>"
     val signature = parameterList.parameters.joinToString(",") { it.type.canonicalText }
-    return "$owner#$name($signature)"
+    return "$projectId::$owner#$name($signature)"
 }
 
 internal fun PsiMethod.ownerName(): String = containingClass?.qualifiedName ?: containingClass?.name ?: "<unknown>"
+
+internal fun Project.auditName(): String = name.ifBlank { basePath ?: "未知工程" }
 
 internal fun PsiMethod.isSimpleAccessor(): Boolean {
     val fieldName = when {
@@ -59,6 +63,7 @@ internal fun resolveImplementations(
     cache: MutableMap<String, List<PsiMethod>>? = null,
     includeConcreteOverrides: Boolean = true
 ): List<PsiMethod> {
+    ProgressManager.checkCanceled()
     val qualifier = beanQualifier(call)
     val cacheKey = method.methodKey() + "|" + qualifier.orEmpty() + "|$includeConcreteOverrides"
     return cache?.getOrPut(cacheKey) { resolveImplementations(project, method, qualifier, includeConcreteOverrides) }
@@ -71,12 +76,14 @@ private fun resolveImplementations(
     qualifier: String?,
     includeConcreteOverrides: Boolean
 ): List<PsiMethod> {
+    ProgressManager.checkCanceled()
     val owner = method.containingClass ?: return emptyList()
     if (!owner.isInterface && !method.hasModifierProperty(PsiModifier.ABSTRACT)) {
         if (!includeConcreteOverrides || !isVirtual(method)) return listOf(method)
         val overrides = ClassInheritorsSearch.search(owner, GlobalSearchScope.projectScope(project), true)
             .findAll()
             .flatMap { inheritor ->
+                ProgressManager.checkCanceled()
                 inheritor.findMethodsByName(method.name, false)
                     .filter { it.hierarchicalMethodSignature.superSignatures.any { signature -> signature.method == method } }
             }
@@ -85,7 +92,10 @@ private fun resolveImplementations(
     }
     val implementations = ClassInheritorsSearch.search(owner, GlobalSearchScope.projectScope(project), true)
         .findAll()
-        .mapNotNull { inheritor -> MethodSignatureUtil.findMethodBySuperMethod(inheritor, method, false) }
+        .mapNotNull { inheritor ->
+            ProgressManager.checkCanceled()
+            MethodSignatureUtil.findMethodBySuperMethod(inheritor, method, false)
+        }
         .filter { !it.hasModifierProperty(PsiModifier.ABSTRACT) }
         .distinctBy { it.methodKey() }
     if (implementations.size <= 1) return implementations

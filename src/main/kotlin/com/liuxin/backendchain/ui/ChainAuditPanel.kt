@@ -9,10 +9,13 @@ import com.intellij.openapi.fileChooser.FileSaverDescriptor
 import com.intellij.openapi.options.ShowSettingsUtil
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.vfs.LocalFileSystem
+import com.intellij.openapi.ui.popup.JBPopupFactory
+import com.intellij.ui.awt.RelativePoint
 import com.intellij.ui.JBSplitter
 import com.intellij.ui.ScrollPaneFactory
 import com.intellij.ui.components.JBLabel
 import com.intellij.ui.components.JBPanel
+import com.intellij.ui.components.JBTextArea
 import com.intellij.ui.table.JBTable
 import com.liuxin.backendchain.action.AnalyzeBatchHttpAction
 import com.liuxin.backendchain.export.ResultExporter
@@ -20,6 +23,9 @@ import com.liuxin.backendchain.model.*
 import com.liuxin.backendchain.settings.ChainAuditConfigurable
 import com.liuxin.backendchain.settings.ChainAuditSettings
 import java.awt.BorderLayout
+import java.awt.Point
+import java.awt.Toolkit
+import java.awt.datatransfer.StringSelection
 import java.awt.event.MouseAdapter
 import java.awt.event.MouseEvent
 import javax.swing.*
@@ -39,13 +45,35 @@ class ChainAuditPanel(private val project: Project) : JBPanel<ChainAuditPanel>(B
             val row = rowAtPoint(event.point)
             val column = columnAtPoint(event.point)
             if (row < 0 || column < 0) return null
-            return getValueAt(row, column)?.toString()
+            val value = getValueAt(row, column)?.toString().orEmpty()
+            if (value.isBlank()) return null
+            if (column == 4) return "双击或右键查看完整证据，可选中复制"
+            val cell = getCellRect(row, column, false)
+            val needsTooltip = column == 4 || getFontMetrics(font).stringWidth(value) > cell.width
+            if (!needsTooltip) return null
+            return htmlTooltip(value)
+        }
+
+        override fun getToolTipLocation(event: MouseEvent): Point =
+            Point(event.x + 16, event.y + 16)
+
+        private fun htmlTooltip(value: String): String {
+            val escaped = value
+                .replace("&", "&amp;")
+                .replace("<", "&lt;")
+                .replace(">", "&gt;")
+                .replace("\n", "<br>")
+            return "<html><body style='width: 520px'>$escaped</body></html>"
         }
     }
     private val tableSorter = TableRowSorter(tableModel)
     private val typeFilter = JComboBox(arrayOf("全部类型") + ResourceType.entries.map { it.displayName }.toTypedArray())
     private val resourceFilter = JTextField(18)
-    private val operationFilter = JComboBox(arrayOf("全部操作") + Operation.entries.map { it.displayName }.toTypedArray())
+    private val operationFilter = JComboBox(
+        (arrayOf("全部操作") + Operation.entries.map { it.displayName } + listOf("查询", "非查询"))
+            .distinct()
+            .toTypedArray()
+    )
     private var result: AnalysisResult? = null
 
     init {
@@ -60,6 +88,7 @@ class ChainAuditPanel(private val project: Project) : JBPanel<ChainAuditPanel>(B
             add(JButton("导出 Mermaid").apply { addActionListener { export("mmd") } })
         }
         table.rowSorter = tableSorter
+        ToolTipManager.sharedInstance().dismissDelay = 30000
         val resourceFilters = JPanel().apply {
             layout = BoxLayout(this, BoxLayout.X_AXIS)
             border = BorderFactory.createEmptyBorder(2, 4, 2, 4)
@@ -121,10 +150,74 @@ class ChainAuditPanel(private val project: Project) : JBPanel<ChainAuditPanel>(B
             }
         })
         table.addMouseListener(object : MouseAdapter() {
+            override fun mousePressed(e: MouseEvent) = maybeShowCellMenu(e)
+
+            override fun mouseReleased(e: MouseEvent) = maybeShowCellMenu(e)
+
             override fun mouseClicked(e: MouseEvent) {
-                if (e.clickCount == 2 && table.selectedRow >= 0) navigate(tableModel.resourceAt(table.convertRowIndexToModel(table.selectedRow)))
+                if (table.selectedRow < 0) return
+                val column = table.columnAtPoint(e.point).takeIf { it >= 0 } ?: return
+                val modelColumn = table.convertColumnIndexToModel(column)
+                if (e.clickCount == 2) {
+                    if (modelColumn == 4) {
+                        showCellDetail(e)
+                    } else {
+                        navigate(tableModel.resourceAt(table.convertRowIndexToModel(table.selectedRow)))
+                    }
+                }
             }
         })
+    }
+
+    private fun maybeShowCellMenu(event: MouseEvent) {
+        if (event.isPopupTrigger || SwingUtilities.isRightMouseButton(event)) {
+            showCellMenu(event)
+        }
+    }
+
+    private fun showCellMenu(event: MouseEvent) {
+        val row = table.rowAtPoint(event.point)
+        val column = table.columnAtPoint(event.point)
+        if (row < 0 || column < 0) return
+        table.setRowSelectionInterval(row, row)
+        table.setColumnSelectionInterval(column, column)
+        val menu = JPopupMenu()
+        menu.add(JMenuItem("查看完整内容").apply { addActionListener { showCellDetail(event) } })
+        menu.add(JMenuItem("复制单元格内容").apply { addActionListener { copyText(cellText(row, column)) } })
+        menu.show(table, event.x, event.y)
+    }
+
+    private fun showCellDetail(event: MouseEvent) {
+        val row = table.rowAtPoint(event.point).takeIf { it >= 0 } ?: table.selectedRow
+        val column = table.columnAtPoint(event.point).takeIf { it >= 0 } ?: table.selectedColumn
+        if (row < 0 || column < 0) return
+        val text = cellText(row, column)
+        if (text.isBlank()) return
+        val textArea = JBTextArea(text, 18, 88).apply {
+            lineWrap = true
+            wrapStyleWord = true
+            isEditable = false
+            caretPosition = 0
+        }
+        val popup = JBPopupFactory.getInstance()
+            .createComponentPopupBuilder(ScrollPaneFactory.createScrollPane(textArea), textArea)
+            .setTitle(table.getColumnName(column))
+            .setMovable(true)
+            .setResizable(true)
+            .setRequestFocus(true)
+            .setCancelOnClickOutside(true)
+            .createPopup()
+        popup.show(RelativePoint(event))
+    }
+
+    private fun cellText(viewRow: Int, viewColumn: Int): String {
+        val modelRow = table.convertRowIndexToModel(viewRow)
+        val modelColumn = table.convertColumnIndexToModel(viewColumn)
+        return tableModel.getValueAt(modelRow, modelColumn).toString()
+    }
+
+    private fun copyText(text: String) {
+        Toolkit.getDefaultToolkit().systemClipboard.setContents(StringSelection(text), null)
     }
 
     private fun navigate(value: Any?) {
@@ -138,9 +231,9 @@ class ChainAuditPanel(private val project: Project) : JBPanel<ChainAuditPanel>(B
             val element = pointer?.element ?: return@compute null
             val navigationElement = element.navigationElement
             val file = navigationElement.containingFile?.virtualFile ?: return@compute null
-            NavigationTarget(file, navigationElement.textOffset.coerceAtLeast(0))
+            NavigationTarget(element.project, file, navigationElement.textOffset.coerceAtLeast(0))
         } ?: return
-        OpenFileDescriptor(project, target.file, target.offset).navigate(true)
+        OpenFileDescriptor(target.project, target.file, target.offset).navigate(true)
     }
 
     private fun export(extension: String) {
@@ -188,10 +281,10 @@ class ChainAuditPanel(private val project: Project) : JBPanel<ChainAuditPanel>(B
     override fun dispose() = Unit
 
     private data class TreeItem(val method: MethodRef, val confidence: Confidence, val reason: String) {
-        override fun toString() = "${method.displayName} [${confidence.displayName}：$reason]"
+        override fun toString() = "${method.projectDisplayName}：${method.displayName} [${confidence.displayName}：$reason]"
     }
 
-    private data class NavigationTarget(val file: com.intellij.openapi.vfs.VirtualFile, val offset: Int)
+    private data class NavigationTarget(val project: Project, val file: com.intellij.openapi.vfs.VirtualFile, val offset: Int)
 }
 
 private class ResourceTableModel : AbstractTableModel() {
@@ -203,6 +296,6 @@ private class ResourceTableModel : AbstractTableModel() {
     override fun getColumnCount() = columns.size
     override fun getColumnName(column: Int) = columns[column]
     override fun getValueAt(rowIndex: Int, columnIndex: Int): Any = resources[rowIndex].let {
-        when (columnIndex) { 0 -> it.type.displayName; 1 -> it.name; 2 -> it.operation.displayName; 3 -> it.confidence.displayName; else -> it.detail }
+        when (columnIndex) { 0 -> it.type.displayName; 1 -> it.name; 2 -> it.operationDisplayName; 3 -> it.confidence.displayName; else -> it.detail }
     }
 }

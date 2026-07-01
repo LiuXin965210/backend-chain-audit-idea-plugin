@@ -16,7 +16,12 @@ import com.intellij.util.concurrency.AppExecutorUtil
 import com.liuxin.backendchain.export.ResultExporter
 import com.liuxin.backendchain.model.*
 import java.io.File
+import java.util.concurrent.CancellationException
 import java.util.concurrent.CopyOnWriteArrayList
+import java.util.concurrent.ExecutionException
+import java.util.concurrent.Future
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.TimeoutException
 
 @Service(Service.Level.PROJECT)
 class ChainAnalysisService(private val project: Project) {
@@ -42,7 +47,7 @@ class ChainAnalysisService(private val project: Project) {
             publish(it); return
         }
         runBackground("分析 ${entry.displayName}") {
-            val result = CallGraphAnalyzer(project, options, defaultExtractors(options)).analyze(entry, method)
+            val result = CallGraphAnalyzer(project, options, defaultExtractors(options), ::publishRunningStatus).analyze(entry, method)
             cached = CachedResult(cacheKey, stamp, result)
             result
         }
@@ -72,6 +77,7 @@ class ChainAnalysisService(private val project: Project) {
         inputs: List<String>,
         csvFile: File?,
         markdownFile: File?,
+        excelFile: File?,
         options: AnalysisOptions = AnalysisOptions()
     ) {
         publishStatus(AnalysisStatus("批量统计等待 IDEA 索引并开始扫描...", running = true))
@@ -82,19 +88,25 @@ class ChainAnalysisService(private val project: Project) {
                 indicator.isIndeterminate = false
                 var canceled = false
                 try {
-                    val analyzer = BatchHttpAnalyzer(project, options)
+                    val analyzer = BatchHttpAnalyzer(project, options.copy(followCrossProjectFeign = false), ::publishRunningStatus)
+                    val rowTimeoutMs = options.batchRowTimeoutSeconds.takeIf { it > 0 }?.toLong()?.times(1000L)
                     inputs.forEachIndexed { offset, raw ->
                         ProgressManager.checkCanceled()
                         val index = offset + 1
                         val input = raw.trim()
                         updateBatchProgress(indicator, index, inputs.size, input)
-                        rows += ReadAction.nonBlocking<BatchAnalysisRow> {
-                            analyzer.analyzeRow(index, input)
+                        try {
+                            rows += runReadActionWithRetry(
+                                indicator,
+                                "批量统计 $input",
+                                rowTimeoutMs
+                            ) {
+                                analyzer.analyzeRow(index, input)
+                            }
+                        } catch (e: AnalysisTimeoutException) {
+                            LOG.warn("Backend chain batch row timed out: $input")
+                            rows += BatchAnalysisRow(index, input, BatchRowStatus.FAILED, e.message)
                         }
-                            .inSmartMode(project)
-                            .expireWith(project)
-                            .submit(AppExecutorUtil.getAppExecutorService())
-                            .get()
                         indicator.fraction = index.toDouble() / inputs.size.coerceAtLeast(1)
                     }
                     indicator.fraction = 1.0
@@ -114,10 +126,11 @@ class ChainAnalysisService(private val project: Project) {
                     try {
                         csvFile?.writeText(ResultExporter.batchCsv(report))
                         markdownFile?.writeText(ResultExporter.batchMarkdown(report))
+                        excelFile?.writeBytes(ResultExporter.batchExcel(report))
                         val suffix = if (canceled) "，用户取消，已导出完成部分" else "，扫描完成"
                         publishStatus(
                             AnalysisStatus(
-                                "批量统计$suffix：${exportedFiles(csvFile, markdownFile)}",
+                                "批量统计$suffix：${exportedFiles(csvFile, markdownFile, excelFile)}",
                                 running = false
                             )
                         )
@@ -145,14 +158,16 @@ class ChainAnalysisService(private val project: Project) {
         publishStatus(AnalysisStatus(message, running = true))
     }
 
-    private fun exportedFiles(csvFile: File?, markdownFile: File?): String =
+    private fun exportedFiles(csvFile: File?, markdownFile: File?, excelFile: File?): String =
         listOfNotNull(
             csvFile?.let { "CSV ${it.absolutePath}" },
-            markdownFile?.let { "Markdown ${it.absolutePath}" }
+            markdownFile?.let { "Markdown ${it.absolutePath}" },
+            excelFile?.let { "Excel ${it.absolutePath}" }
         ).joinToString("，")
 
     private fun locateAndAnalyze(label: String, options: AnalysisOptions, locate: () -> List<LocatedEntry>) {
         runBackground("定位 $label") {
+            publishRunningStatus("分析 $label，等待当前工程索引...")
             val entries = locate()
             if (entries.isEmpty()) {
                 AnalysisResult(
@@ -161,7 +176,7 @@ class ChainAnalysisService(private val project: Project) {
                     listOf(AnalysisWarning("未找到入口：$label"))
                 )
             } else {
-                val results = entries.map { CallGraphAnalyzer(project, options, defaultExtractors(options)).analyze(it.entry, it.method) }
+                val results = entries.map { CallGraphAnalyzer(project, options, defaultExtractors(options), ::publishRunningStatus).analyze(it.entry, it.method) }
                 merge(results, options)
             }
         }
@@ -172,16 +187,11 @@ class ChainAnalysisService(private val project: Project) {
         object : Task.Backgroundable(project, title, true) {
             override fun run(indicator: ProgressIndicator) {
                 try {
-                    val result = ReadAction.nonBlocking(action)
-                        .inSmartMode(project)
-                        .expireWith(project)
-                        .submit(AppExecutorUtil.getAppExecutorService())
-                        .get()
+                    val result = runReadActionWithRetry(indicator, title, action = action)
                     publishStatus(AnalysisStatus("$title，扫描完成", running = false))
                     publish(result)
                 } catch (e: ProcessCanceledException) {
                     publishStatus(AnalysisStatus("$title，扫描已取消", running = false))
-                    throw e
                 } catch (e: Throwable) {
                     val cause = e.cause ?: e
                     LOG.warn("Backend chain analysis failed: $title", cause)
@@ -197,6 +207,74 @@ class ChainAnalysisService(private val project: Project) {
         }.queue()
     }
 
+    private fun <T> awaitCancellable(future: Future<T>, indicator: ProgressIndicator): T {
+        return awaitCancellable(future, indicator, null, null, "")
+    }
+
+    private fun <T> awaitCancellable(
+        future: Future<T>,
+        indicator: ProgressIndicator,
+        deadlineNanos: Long?,
+        timeoutMs: Long?,
+        timeoutLabel: String
+    ): T {
+        while (true) {
+            try {
+                indicator.checkCanceled()
+                ProgressManager.checkCanceled()
+                if (deadlineNanos != null && System.nanoTime() > deadlineNanos) {
+                    future.cancel(true)
+                    throw AnalysisTimeoutException(timeoutLabel, timeoutMs ?: 0L)
+                }
+                return future.get(100, TimeUnit.MILLISECONDS)
+            } catch (e: TimeoutException) {
+                continue
+            } catch (e: ProcessCanceledException) {
+                future.cancel(true)
+                throw e
+            } catch (e: CancellationException) {
+                throw ProcessCanceledException(e)
+            } catch (e: ExecutionException) {
+                val cause = e.cause ?: e
+                if (cause is ProcessCanceledException) throw cause
+                throw cause
+            } catch (e: InterruptedException) {
+                future.cancel(true)
+                Thread.currentThread().interrupt()
+                throw ProcessCanceledException(e)
+            }
+        }
+    }
+
+    private fun <T> runReadActionWithRetry(
+        indicator: ProgressIndicator,
+        label: String,
+        timeoutMs: Long? = null,
+        action: () -> T
+    ): T {
+        var last: ProcessCanceledException? = null
+        val deadlineNanos = timeoutMs?.let { System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(it) }
+        repeat(READ_ACTION_MAX_ATTEMPTS) { attempt ->
+            try {
+                val future = ReadAction.nonBlocking(action)
+                    .inSmartMode(project)
+                    .expireWith(project)
+                    .submit(AppExecutorUtil.getAppExecutorService())
+                return awaitCancellable(future, indicator, deadlineNanos, timeoutMs, label)
+            } catch (e: AnalysisTimeoutException) {
+                throw e
+            } catch (e: ProcessCanceledException) {
+                if (indicator.isCanceled || project.isDisposed) throw e
+                last = e
+                val nextAttempt = attempt + 1
+                if (nextAttempt >= READ_ACTION_MAX_ATTEMPTS) throw e
+                publishRunningStatus("$label，IDE 取消了本次读动作，正在重试 $nextAttempt/${READ_ACTION_MAX_ATTEMPTS - 1}...")
+                Thread.sleep(READ_ACTION_RETRY_DELAY_MS)
+            }
+        }
+        throw last ?: ProcessCanceledException()
+    }
+
     private fun publish(result: AnalysisResult) = com.intellij.openapi.application.ApplicationManager.getApplication().invokeLater {
         listeners.forEach { it(result) }
     }
@@ -205,6 +283,8 @@ class ChainAnalysisService(private val project: Project) {
         com.intellij.openapi.application.ApplicationManager.getApplication().invokeLater {
             statusListeners.forEach { it(status) }
         }
+
+    private fun publishRunningStatus(message: String) = publishStatus(AnalysisStatus(message, running = true))
 
     private fun merge(results: List<AnalysisResult>, options: AnalysisOptions): AnalysisResult {
         if (results.size == 1) return results.first()
@@ -223,7 +303,12 @@ class ChainAnalysisService(private val project: Project) {
 
     companion object {
         private val LOG = Logger.getInstance(ChainAnalysisService::class.java)
+        private const val READ_ACTION_MAX_ATTEMPTS = 4
+        private const val READ_ACTION_RETRY_DELAY_MS = 150L
 
         fun methodEntry(method: PsiMethod) = EntryPoint(EntryType.METHOD, "${method.ownerName()}.${method.name}")
     }
 }
+
+private class AnalysisTimeoutException(label: String, timeoutMs: Long) :
+    RuntimeException("$label 超过 ${timeoutMs / 1000} 秒未完成，已跳过该接口")

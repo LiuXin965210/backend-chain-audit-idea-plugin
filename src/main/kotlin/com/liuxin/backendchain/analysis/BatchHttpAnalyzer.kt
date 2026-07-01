@@ -1,6 +1,7 @@
 package com.liuxin.backendchain.analysis
 
 import com.intellij.openapi.diagnostic.Logger
+import com.intellij.openapi.progress.ProcessCanceledException
 import com.intellij.openapi.project.Project
 import com.intellij.psi.PsiModifier
 import com.intellij.psi.PsiMethod
@@ -12,7 +13,8 @@ import com.liuxin.backendchain.model.MethodRef
 
 class BatchHttpAnalyzer(
     private val project: Project,
-    private val options: AnalysisOptions
+    private val options: AnalysisOptions,
+    private val statusPublisher: ((String) -> Unit)? = null
 ) {
     private val implementationCache = mutableMapOf<String, List<PsiMethod>>()
 
@@ -42,8 +44,11 @@ class BatchHttpAnalyzer(
             interfaceSkipReason(located.method)
         )
         return try {
-            val result = CallGraphAnalyzer(project, options, defaultExtractors(options)).analyze(located.entry, root)
+            val batchOptions = options.copy(followCrossProjectFeign = false)
+            val result = CallGraphAnalyzer(project, batchOptions, defaultExtractors(batchOptions), statusPublisher).analyze(located.entry, root)
             BatchAnalysisRow(index, input, BatchRowStatus.SUCCESS, result = result, analyzedMethod = methodRef(root))
+        } catch (e: ProcessCanceledException) {
+            throw e
         } catch (e: Throwable) {
             val cause = e.cause ?: e
             LOG.warn("Backend chain batch row failed: $input", cause)
@@ -70,7 +75,9 @@ class BatchHttpAnalyzer(
             method.ownerName(),
             method.name,
             SmartPointerManager.getInstance(project).createSmartPsiElementPointer(method),
-            !method.isProjectSource(project)
+            !method.isProjectSource(project),
+            project.auditName(),
+            project.basePath
         )
 
     companion object {

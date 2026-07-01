@@ -1,10 +1,10 @@
 package com.liuxin.backendchain.analysis
 
-import com.intellij.psi.PsiAnnotation
 import com.intellij.psi.PsiExpression
 import com.intellij.psi.PsiField
 import com.intellij.psi.PsiLiteralExpression
 import com.intellij.psi.PsiLocalVariable
+import com.intellij.psi.PsiMethodCallExpression
 import com.intellij.psi.PsiPolyadicExpression
 import com.intellij.psi.PsiReferenceExpression
 import com.intellij.psi.SmartPointerManager
@@ -13,35 +13,26 @@ import com.liuxin.backendchain.model.*
 class ExternalHttpExtractor(
     private val customHttpClientClassPrefixes: List<String> = listOf("jsh.mgt.lib.http.BasicHttpUtil")
 ) : ResourceExtractor {
-    private val mappings = listOf("GetMapping", "PostMapping", "PutMapping", "DeleteMapping", "PatchMapping", "RequestMapping")
-
     override fun extract(context: CallContext): List<ResourceRef> {
         val target = context.resolvedMethod ?: return emptyList()
         val clazz = target.containingClass ?: return emptyList()
-        val feign = annotation(clazz, "FeignClient")
-        if (feign != null) {
-            val mapping = mappings.firstNotNullOfOrNull { name -> annotation(target, name)?.let { name to it } }
-                ?: return emptyList()
-            val service = declaredAnnotationString(feign, "name", "value", "url") ?: "待确认服务"
-            val base = annotationString(feign, "path")
-            val classPath = annotationString(annotation(clazz, "RequestMapping"), "path", "value")
-            val methodPath = annotationString(mapping.second, "path", "value")
-            val httpMethod = mappingMethod(mapping.first, mapping.second)
-            val path = normalizePath(base, classPath, methodPath)
-            val confidence = if (service.startsWith("\${") || methodPath == null) Confidence.UNRESOLVED else Confidence.CONFIRMED
-            return listOf(resource(target, "$service $httpMethod $path", confidence, "Feign ${clazz.qualifiedName}.${target.name}"))
+        FeignEndpointParser.parse(context)?.let { endpoint ->
+            val confidence = if (endpoint.service.startsWith("\${") || endpoint.displayPath == "/") Confidence.UNRESOLVED else Confidence.CONFIRMED
+            val displayName = ConfigValueResolver.resolvePlaceholders(target.project, endpoint.displayName)
+            return listOf(resource(target, displayName, confidence, detail("Feign ${endpoint.source}", endpoint.displayName, displayName)))
         }
 
         val owner = clazz.qualifiedName.orEmpty()
         if (isHttpClient(owner)) {
             val url = httpUrl(context.call?.argumentList?.expressions?.firstOrNull()) ?: "待确认URL"
+            val resolvedUrl = ConfigValueResolver.resolvePlaceholders(target.project, url)
             val httpMethod = httpMethod(target.name)
             return listOf(
                 resource(
                     target,
-                    "$httpMethod $url",
+                    "$httpMethod $resolvedUrl",
                     if (url == "待确认URL") Confidence.UNRESOLVED else Confidence.INFERRED,
-                    "HTTP client $owner.${target.name}"
+                    detail("HTTP client $owner.${target.name}", url, resolvedUrl)
                 )
             )
         }
@@ -74,22 +65,41 @@ class ExternalHttpExtractor(
                 else -> null
             }
         }
+        expression is PsiMethodCallExpression -> stringFormatUrl(expression, depth + 1)
         expression is PsiPolyadicExpression -> expression.operands.mapNotNull { httpUrl(it, depth + 1) }.joinToString("").ifBlank { null }
         else -> constantString(expression)
     }
 
-    private fun mappingMethod(name: String, value: PsiAnnotation): String = when (name) {
-        "GetMapping" -> "GET"; "PostMapping" -> "POST"; "PutMapping" -> "PUT"; "DeleteMapping" -> "DELETE"; "PatchMapping" -> "PATCH"
-        else -> Regex("RequestMethod\\.([A-Z]+)").find(value.text)?.groupValues?.get(1) ?: "未声明"
+    private fun stringFormatUrl(call: PsiMethodCallExpression, depth: Int): String? {
+        val expression = call.methodExpression
+        if (expression.referenceName != "format" || expression.qualifierExpression?.text != "String") return null
+        val args = call.argumentList.expressions
+        val template = httpUrl(args.firstOrNull(), depth) ?: return null
+        var index = 1
+        val result = StringBuilder()
+        var cursor = 0
+        FORMAT_PLACEHOLDER.findAll(template).forEach { match ->
+            result.append(template.substring(cursor, match.range.first))
+            if (match.value == "%%") {
+                result.append("%")
+            } else {
+                result.append(httpUrl(args.getOrNull(index++), depth) ?: return null)
+            }
+            cursor = match.range.last + 1
+        }
+        result.append(template.substring(cursor))
+        return result.toString()
     }
 
-    private fun declaredAnnotationString(annotation: PsiAnnotation, vararg names: String): String? =
-        names.firstNotNullOfOrNull { name ->
-            annotation.findDeclaredAttributeValue(name)?.let(::constantString)?.takeIf(String::isNotBlank)
-        }
+    private fun detail(base: String, original: String, resolved: String): String =
+        if (original == resolved) base else "$base；配置解析：$original -> $resolved"
 
     private fun resource(target: com.intellij.psi.PsiMethod, name: String, confidence: Confidence, detail: String) = ResourceRef(
         ResourceType.EXTERNAL_HTTP, name, Operation.CALL, confidence, detail,
         SmartPointerManager.getInstance(target.project).createSmartPsiElementPointer(target)
     )
+
+    private companion object {
+        private val FORMAT_PLACEHOLDER = Regex("""%%|%s""")
+    }
 }

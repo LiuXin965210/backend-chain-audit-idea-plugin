@@ -24,6 +24,17 @@ enum class Operation(val displayName: String) {
     READ("只读"), WRITE("写入"), PRODUCE("生产"), CONSUME("消费"), CALL("调用"), UNKNOWN("未知")
 }
 
+val ResourceRef.operationDisplayName: String
+    get() = if (type == ResourceType.EXTERNAL_HTTP) {
+        when (operation) {
+            Operation.READ -> "查询"
+            Operation.CALL -> "非查询"
+            else -> operation.displayName
+        }
+    } else {
+        operation.displayName
+    }
+
 data class EntryPoint(
     val type: EntryType,
     val displayName: String,
@@ -36,9 +47,12 @@ data class MethodRef(
     val className: String,
     val methodName: String,
     val pointer: SmartPsiElementPointer<out PsiElement>?,
-    val external: Boolean = false
+    val external: Boolean = false,
+    val projectName: String? = null,
+    val projectBasePath: String? = null
 ) {
     val displayName: String get() = "$className.$methodName"
+    val projectDisplayName: String get() = projectName ?: projectBasePath ?: "未知工程"
 }
 
 data class CallEdge(
@@ -107,6 +121,11 @@ data class AnalysisOptions(
     val deduplicateResources: Boolean = false,
     val hideSimpleAccessors: Boolean = true,
     val followConcreteMethodOverrides: Boolean = false,
+    val followCrossProjectFeign: Boolean = false,
+    val crossProjectFeignMappings: Map<String, String> = emptyMap(),
+    val maxCrossProjectDepth: Int = 3,
+    val batchRowTimeoutSeconds: Int = 0,
+    val excludedExternalHttpPathPatterns: List<String> = emptyList(),
     val customHttpClientClassPrefixes: List<String> = listOf("jsh.mgt.lib.http.BasicHttpUtil"),
     val customMqProducerAnnotations: List<String> = listOf("JshRabbitProducer"),
     val customMqConsumerAnnotations: List<String> = listOf("JshRabbitConsumer"),

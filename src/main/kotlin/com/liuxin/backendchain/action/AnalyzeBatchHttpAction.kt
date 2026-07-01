@@ -52,18 +52,20 @@ private fun run(project: Project) {
     }
     val inputs = validation.inputs
     val format = dialog.exportFormat()
-    if (!format.includesCsv && !format.includesMarkdown) {
+    if (!format.hasSelection) {
         Messages.showWarningDialog(project, "批量统计必须至少选择一种导出格式。", "Backend Chain Audit")
         return
     }
     val selectedFile = chooseExportFile(project, format) ?: return
     val csvFile = if (format.includesCsv) csvFileFor(selectedFile) else null
     val markdownFile = if (format.includesMarkdown) markdownFileFor(selectedFile) else null
+    val excelFile = if (format.includesExcel) excelFileFor(selectedFile) else null
     ChainAuditToolWindowFactory.activate(project)
     project.service<ChainAnalysisService>().analyzeBatchHttpPaths(
         inputs,
         csvFile,
         markdownFile,
+        excelFile,
         project.service<ChainAuditSettings>().options()
     )
 }
@@ -143,6 +145,9 @@ private fun csvFileFor(file: File): File =
 private fun markdownFileFor(file: File): File =
     if (file.name.endsWith(".md", ignoreCase = true)) file else siblingWithExtension(file, "md")
 
+private fun excelFileFor(file: File): File =
+    if (file.name.endsWith(".xlsx", ignoreCase = true)) file else siblingWithExtension(file, "xlsx")
+
 private fun siblingWithExtension(file: File, extension: String): File {
     val baseName = file.name.substringBeforeLast('.')
     return File(file.parentFile ?: File("."), "$baseName.$extension")
@@ -155,6 +160,7 @@ private class BatchHttpInputDialog(project: Project) : DialogWrapper(project) {
     }
     private val csvCheckBox = JBCheckBox("CSV", false)
     private val markdownCheckBox = JBCheckBox("Markdown", true)
+    private val excelCheckBox = JBCheckBox("Excel", false)
 
     init {
         title = "批量统计 HTTP 接口"
@@ -165,7 +171,8 @@ private class BatchHttpInputDialog(project: Project) : DialogWrapper(project) {
 
     fun exportFormat(): BatchExportFormat = BatchExportFormat(
         includesCsv = csvCheckBox.isSelected,
-        includesMarkdown = markdownCheckBox.isSelected
+        includesMarkdown = markdownCheckBox.isSelected,
+        includesExcel = excelCheckBox.isSelected
     )
 
     override fun createCenterPanel(): JComponent = JPanel(BorderLayout(0, 8)).apply {
@@ -176,6 +183,8 @@ private class BatchHttpInputDialog(project: Project) : DialogWrapper(project) {
             add(csvCheckBox)
             add(Box.createHorizontalStrut(8))
             add(markdownCheckBox)
+            add(Box.createHorizontalStrut(8))
+            add(excelCheckBox)
             add(Box.createHorizontalGlue())
         }
         add(header, BorderLayout.NORTH)
@@ -187,13 +196,20 @@ private class BatchHttpInputDialog(project: Project) : DialogWrapper(project) {
 
 private data class BatchExportFormat(
     val includesCsv: Boolean,
-    val includesMarkdown: Boolean
+    val includesMarkdown: Boolean,
+    val includesExcel: Boolean
 ) {
-    val primaryExtension: String = if (includesCsv) "csv" else "md"
+    val hasSelection: Boolean = includesCsv || includesMarkdown || includesExcel
+    val primaryExtension: String = when {
+        includesExcel -> "xlsx"
+        includesCsv -> "csv"
+        else -> "md"
+    }
     val description: String = when {
-        includesCsv && includesMarkdown -> "选择 CSV 保存位置；同名 Markdown 会一起生成"
+        listOf(includesCsv, includesMarkdown, includesExcel).count { it } > 1 -> "选择 ${primaryExtension.uppercase()} 保存位置；其他格式会以同名文件一起生成"
         includesCsv -> "选择 CSV 保存位置"
         includesMarkdown -> "选择 Markdown 保存位置"
+        includesExcel -> "选择 Excel 保存位置"
         else -> "选择导出保存位置"
     }
 }

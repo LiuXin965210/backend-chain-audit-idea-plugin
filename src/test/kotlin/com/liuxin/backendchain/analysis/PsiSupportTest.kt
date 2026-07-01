@@ -39,6 +39,31 @@ class PsiSupportTest : BasePlatformTestCase() {
         assertEquals("createTradeOrder", (references.single().resolve() as com.intellij.psi.PsiMethod).name)
     }
 
+    fun testConstructorMethodReferenceDoesNotWarn() {
+        myFixture.configureByText(
+            "StockHoldingService.java",
+            """
+                class StockHolding {
+                    StockHolding(String code) {}
+                }
+                class StockHoldingService {
+                    java.util.List<StockHolding> convert(java.util.List<String> codes) {
+                        return codes.stream().map(StockHolding::new).collect(java.util.stream.Collectors.toList());
+                    }
+                }
+            """.trimIndent()
+        )
+
+        val method = findClass("StockHoldingService").findMethodsByName("convert", false).single()
+        val result = CallGraphAnalyzer(
+            project,
+            AnalysisOptions(),
+            emptyList()
+        ).analyze(EntryPoint(EntryType.METHOD, "test"), method)
+
+        assertTrue(result.warnings.none { it.message.contains("StockHolding::new") })
+    }
+
     fun testFindsConcreteTemplateMethodOverrides() {
         myFixture.configureByText(
             "Services.java",
@@ -240,6 +265,178 @@ class PsiSupportTest : BasePlatformTestCase() {
         assertEquals("POST \${replenish.jsh.open-api-prefix}/btbrrs/jsh-zhilian/api/popsc/receive", resource.name)
     }
 
+    fun testResolvesExternalHttpPlaceholderFromYaml() {
+        myFixture.configureByText("Value.java", "@interface Value { String value(); }")
+        myFixture.addFileToProject(
+            "src/main/resources/application.yml",
+            """
+                msg:
+                  url:
+                    send-message: http://notice-inner/api/notice/send
+            """.trimIndent()
+        )
+        myFixture.configureByText(
+            "NoticeClient.java",
+            """
+                class BasicHttpUtil {
+                    Object exchange(String url, Object body) { return null; }
+                }
+                class NoticeClient {
+                    @Value("${'$'}{msg.url.send-message}") String sendMessageUrl;
+                    BasicHttpUtil basicHttpUtil;
+                    void send(Object body) {
+                        basicHttpUtil.exchange(sendMessageUrl, body);
+                    }
+                }
+            """.trimIndent()
+        )
+
+        val method = findClass("NoticeClient").findMethodsByName("send", false).single()
+        val call = PsiTreeUtil.findChildOfType(method.body, PsiMethodCallExpression::class.java)!!
+        val resource = ExternalHttpExtractor(listOf("BasicHttpUtil"))
+            .extract(CallContext(method, call, call.resolveMethod(), call.text)).single()
+
+        assertEquals("未声明 http://notice-inner/api/notice/send", resource.name)
+        assertContains(resource.detail, "配置解析：\${msg.url.send-message} -> http://notice-inner/api/notice/send")
+    }
+
+    fun testExtractsHttpClientUrlFromStringFormatInitializer() {
+        myFixture.configureByText("Value.java", "@interface Value { String value(); }")
+        myFixture.addFileToProject(
+            "src/main/resources/application.yml",
+            """
+                ylh:
+                  gateway: https://dev.ylhtest.com
+                  cloud:
+                    service:
+                      policy: ylh-cloud-service-policy
+            """.trimIndent()
+        )
+        myFixture.configureByText(
+            "PromotionClient.java",
+            """
+                class SpringCloudInnerUtil {
+                    static Object postForObject(String url, Object body, Object reference) { return null; }
+                }
+                class PromotionClient {
+                    @Value("${'$'}{ylh.gateway}") String ylhGateway;
+                    @Value("${'$'}{ylh.cloud.service.policy}") String policyFeignName;
+
+                    void send(Object body) {
+                        String url = String.format(
+                            "%s/%s/api/page/promotion/common/order-info-back-add",
+                            ylhGateway, policyFeignName);
+                        SpringCloudInnerUtil.postForObject(url, body, null);
+                    }
+                }
+            """.trimIndent()
+        )
+
+        val method = findClass("PromotionClient").findMethodsByName("send", false).single()
+        val call = PsiTreeUtil.findChildrenOfType(method.body, PsiMethodCallExpression::class.java)
+            .first { it.methodExpression.referenceName == "postForObject" }
+        val resource = ExternalHttpExtractor(listOf("SpringCloudInnerUtil"))
+            .extract(CallContext(method, call, call.resolveMethod(), call.text)).single()
+
+        assertEquals(
+            "POST https://dev.ylhtest.com/ylh-cloud-service-policy/api/page/promotion/common/order-info-back-add",
+            resource.name
+        )
+        assertContains(resource.detail, "配置解析：\${ylh.gateway}/\${ylh.cloud.service.policy}/api/page/promotion/common/order-info-back-add")
+    }
+
+    fun testResolvesFeignPlaceholderFromProperties() {
+        myFixture.configureByText(
+            "FeignAnnotations.java",
+            """
+                @interface FeignClient {
+                    String name() default "";
+                    String path() default "";
+                }
+                @interface PostMapping {
+                    String value() default "";
+                }
+            """.trimIndent()
+        )
+        myFixture.addFileToProject(
+            "src/main/resources/application.properties",
+            "ylh.cloud.service.notice=ylh-cloud-service-notice"
+        )
+        myFixture.configureByText(
+            "NoticeFeign.java",
+            """
+                @FeignClient(name = "${'$'}{ylh.cloud.service.notice}", path = "/api")
+                interface NoticeFeign {
+                    @PostMapping("/inner/notice/send") Object send(Object body);
+                }
+                class NoticeService {
+                    NoticeFeign noticeFeign;
+                    void send(Object body) {
+                        noticeFeign.send(body);
+                    }
+                }
+            """.trimIndent()
+        )
+
+        val method = findClass("NoticeService").findMethodsByName("send", false).single()
+        val call = PsiTreeUtil.findChildOfType(method.body, PsiMethodCallExpression::class.java)!!
+        val resource = ExternalHttpExtractor()
+            .extract(CallContext(method, call, call.resolveMethod(), call.text)).single()
+
+        assertEquals("ylh-cloud-service-notice POST /api/inner/notice/send", resource.name)
+        assertContains(resource.detail, "配置解析：\${ylh.cloud.service.notice} POST /api/inner/notice/send -> ylh-cloud-service-notice POST /api/inner/notice/send")
+    }
+
+    fun testExtractsCustomJshFeignClientEndpoint() {
+        myFixture.configureByText(
+            "FeignAnnotations.java",
+            """
+                @interface JshFeignClient {
+                    String name() default "";
+                    String url() default "";
+                    String authAlias() default "";
+                }
+                @interface PostMapping {
+                    String value() default "";
+                }
+            """.trimIndent()
+        )
+        myFixture.addFileToProject(
+            "src/main/resources/application.properties",
+            "jsh.feign.evaluation.url=https://evaluation-inner"
+        )
+        myFixture.configureByText(
+            "EvaluationFeign.java",
+            """
+                @JshFeignClient(
+                    name = "EvaluationFeign",
+                    url = "${'$'}{jsh.feign.evaluation.url}",
+                    authAlias = "mg")
+                interface EvaluationFeign {
+                    @PostMapping("/biz/api/inner/activity/create-prefill-evaluation-info")
+                    String createPrefillEvaluationInfo(Object paramDto);
+                }
+                class EvaluationService {
+                    EvaluationFeign evaluationFeign;
+                    String run(Object paramDto) {
+                        return evaluationFeign.createPrefillEvaluationInfo(paramDto);
+                    }
+                }
+            """.trimIndent()
+        )
+
+        val method = findClass("EvaluationService").findMethodsByName("run", false).single()
+        val call = PsiTreeUtil.findChildOfType(method.body, PsiMethodCallExpression::class.java)!!
+        val resource = ExternalHttpExtractor()
+            .extract(CallContext(method, call, call.resolveMethod(), call.text)).single()
+
+        assertEquals(
+            "https://evaluation-inner POST /biz/api/inner/activity/create-prefill-evaluation-info",
+            resource.name
+        )
+        assertContains(resource.detail, "JshFeignClient")
+    }
+
     fun testExtractsHttpClientUrlFromLocalVariableInitializer() {
         myFixture.configureByText(
             "Value.java",
@@ -331,6 +528,271 @@ class PsiSupportTest : BasePlatformTestCase() {
         assertEquals(
             "${'$'}{ylh.cloud.service.user}/api GET /inner/member/shop/search-site-address-by-id",
             resource.name
+        )
+    }
+
+    fun testCrossProjectFeignReportsMissingMapping() {
+        myFixture.configureByText(
+            "FeignAnnotations.java",
+            """
+                @interface FeignClient {
+                    String name() default "";
+                    String value() default "";
+                    String url() default "";
+                    String path() default "";
+                }
+                @interface GetMapping {
+                    String[] value() default {};
+                    String[] path() default {};
+                }
+            """.trimIndent()
+        )
+        myFixture.configureByText(
+            "CrossProjectFeign.java",
+            """
+                @FeignClient(value = "${'$'}{ylh.cloud.service.user}")
+                interface UserFeign {
+                    @GetMapping("/api/user/detail")
+                    String detail();
+                }
+                class CrossProjectCaller {
+                    UserFeign userFeign;
+                    String run() { return userFeign.detail(); }
+                }
+            """.trimIndent()
+        )
+
+        val method = findClass("CrossProjectCaller").findMethodsByName("run", false).single()
+        val result = CallGraphAnalyzer(
+            project,
+            AnalysisOptions(followCrossProjectFeign = true),
+            listOf(ExternalHttpExtractor())
+        ).analyze(EntryPoint(EntryType.METHOD, "test"), method)
+
+        assertTrue(result.resources.any { it.type == ResourceType.EXTERNAL_HTTP })
+        assertTrue(result.warnings.any { it.message.contains("未配置服务映射") })
+    }
+
+    fun testCrossProjectFeignReportsUnopenedMappedProject() {
+        myFixture.configureByText(
+            "FeignAnnotations.java",
+            """
+                @interface FeignClient {
+                    String name() default "";
+                    String value() default "";
+                    String url() default "";
+                    String path() default "";
+                }
+                @interface GetMapping {
+                    String[] value() default {};
+                    String[] path() default {};
+                }
+            """.trimIndent()
+        )
+        myFixture.configureByText(
+            "MappedFeign.java",
+            """
+                @FeignClient(value = "${'$'}{ylh.cloud.service.stock}")
+                interface StockFeign {
+                    @GetMapping("/api/stock/detail")
+                    String detail();
+                }
+                class CrossProjectMappedCaller {
+                    StockFeign stockFeign;
+                    String run() { return stockFeign.detail(); }
+                }
+            """.trimIndent()
+        )
+
+        val method = findClass("CrossProjectMappedCaller").findMethodsByName("run", false).single()
+        val result = CallGraphAnalyzer(
+            project,
+            AnalysisOptions(
+                followCrossProjectFeign = true,
+                crossProjectFeignMappings = mapOf("${'$'}{ylh.cloud.service.stock}" to "missing-project")
+            ),
+            listOf(ExternalHttpExtractor())
+        ).analyze(EntryPoint(EntryType.METHOD, "test"), method)
+
+        assertTrue(result.warnings.any { it.message.contains("目标工程未打开") })
+    }
+
+    fun testBatchHttpAnalyzerDoesNotFollowCrossProjectFeign() {
+        myFixture.configureByText(
+            "FeignAnnotations.java",
+            """
+                @interface FeignClient {
+                    String value() default "";
+                }
+                @interface GetMapping {
+                    String[] value() default {};
+                    String[] path() default {};
+                }
+            """.trimIndent()
+        )
+        myFixture.configureByText(
+            "BatchController.java",
+            """
+                @FeignClient(value = "${'$'}{ylh.cloud.service.user}")
+                interface BatchUserFeign {
+                    @GetMapping("/api/user/detail")
+                    String detail();
+                }
+                class BatchController {
+                    BatchUserFeign userFeign;
+                    @GetMapping("/api/batch/source")
+                    String run() { return userFeign.detail(); }
+                }
+            """.trimIndent()
+        )
+
+        val row = BatchHttpAnalyzer(project, AnalysisOptions(followCrossProjectFeign = true))
+            .analyzeRow(1, "/api/batch/source")
+
+        assertEquals(BatchRowStatus.SUCCESS, row.status)
+        assertTrue(row.result!!.warnings.none { it.message.contains("未配置服务映射") })
+        assertTrue(row.result.resources.any { it.type == ResourceType.EXTERNAL_HTTP })
+    }
+
+    fun testCrossProjectFeignMissingMappingWarningIsCachedPerEndpoint() {
+        myFixture.configureByText(
+            "FeignAnnotations.java",
+            """
+                @interface FeignClient {
+                    String value() default "";
+                }
+                @interface GetMapping {
+                    String[] value() default {};
+                    String[] path() default {};
+                }
+            """.trimIndent()
+        )
+        myFixture.configureByText(
+            "RepeatedFeignCaller.java",
+            """
+                @FeignClient(value = "${'$'}{ylh.cloud.service.user}")
+                interface RepeatedUserFeign {
+                    @GetMapping("/api/user/detail")
+                    String detail();
+                }
+                class RepeatedFeignCaller {
+                    RepeatedUserFeign userFeign;
+                    String run() {
+                        userFeign.detail();
+                        return userFeign.detail();
+                    }
+                }
+            """.trimIndent()
+        )
+
+        val method = findClass("RepeatedFeignCaller").findMethodsByName("run", false).single()
+        var resolveCount = 0
+        val result = CallGraphAnalyzer(
+            project,
+            AnalysisOptions(followCrossProjectFeign = true),
+            listOf(ExternalHttpExtractor())
+        ) { status ->
+            if (status.contains("定位目标工程")) resolveCount++
+        }.analyze(EntryPoint(EntryType.METHOD, "test"), method)
+
+        assertEquals(1, resolveCount)
+        assertEquals(1, result.warnings.count { it.message.contains("未配置服务映射") })
+    }
+
+    fun testReadOnlyExternalHttpStillFollowsCrossProjectFeign() {
+        myFixture.configureByText(
+            "FeignAnnotations.java",
+            """
+                @interface FeignClient {
+                    String value() default "";
+                }
+                @interface PostMapping {
+                    String[] value() default {};
+                    String[] path() default {};
+                }
+            """.trimIndent()
+        )
+        myFixture.configureByText(
+            "ExcludedSearchFeignCaller.java",
+            """
+                @FeignClient(value = "${'$'}{ylh.cloud.service.user}/api")
+                interface ExcludedUserFeign {
+                    @PostMapping("/inner/memberCompany/memberCustomerSupplier/search-customerSupplier-by-pro")
+                    String search();
+                }
+                class ExcludedSearchFeignCaller {
+                    ExcludedUserFeign userFeign;
+                    String run() { return userFeign.search(); }
+                }
+            """.trimIndent()
+        )
+
+        val method = findClass("ExcludedSearchFeignCaller").findMethodsByName("run", false).single()
+        var resolveCount = 0
+        val result = CallGraphAnalyzer(
+            project,
+            AnalysisOptions(
+                followCrossProjectFeign = true,
+                excludedExternalHttpPathPatterns = listOf("/search-")
+            ),
+            listOf(ExternalHttpExtractor())
+        ) { status ->
+            if (status.contains("定位目标工程")) resolveCount++
+        }.analyze(EntryPoint(EntryType.METHOD, "test"), method)
+
+        assertEquals(1, resolveCount)
+        val external = result.resources.single { it.type == ResourceType.EXTERNAL_HTTP }
+        assertEquals(Operation.READ, external.operation)
+        assertTrue(result.warnings.any { it.message.contains("未配置服务映射") })
+    }
+
+    fun testClassifiesExternalHttpByConfiguredPathPatterns() {
+        myFixture.configureByText(
+            "ExternalFilterService.java",
+            """
+                class ExternalFilterService {
+                    void run() {
+                        getTaxRate();
+                        listCustomers();
+                        searchOrders();
+                        createOrder();
+                    }
+                    void getTaxRate() {}
+                    void listCustomers() {}
+                    void searchOrders() {}
+                    void createOrder() {}
+                }
+            """.trimIndent()
+        )
+        val extractor = object : ResourceExtractor {
+            override fun extract(context: CallContext): List<ResourceRef> {
+                val target = context.resolvedMethod ?: return emptyList()
+                val path = when (target.name) {
+                    "getTaxRate" -> "/api/member/get-tax-rate-by-member-id"
+                    "listCustomers" -> "/api/member/list-customer"
+                    "searchOrders" -> "/api/order/search-order"
+                    "createOrder" -> "/api/order/create-order"
+                    else -> return emptyList()
+                }
+                return listOf(ResourceRef(ResourceType.EXTERNAL_HTTP, "GET $path", Operation.CALL, Confidence.CONFIRMED, "http", null))
+            }
+        }
+        val method = findClass("ExternalFilterService").findMethodsByName("run", false).single()
+
+        val result = CallGraphAnalyzer(
+            project,
+            AnalysisOptions(excludedExternalHttpPathPatterns = listOf("/get-", "/list-", "regex:/search-")),
+            listOf(extractor)
+        ).analyze(EntryPoint(EntryType.METHOD, "test"), method)
+
+        assertEquals(
+            listOf(
+                "GET /api/member/get-tax-rate-by-member-id" to Operation.READ,
+                "GET /api/member/list-customer" to Operation.READ,
+                "GET /api/order/search-order" to Operation.READ,
+                "GET /api/order/create-order" to Operation.CALL
+            ),
+            result.resources.map { it.name to it.operation }
         )
     }
 
@@ -752,6 +1214,32 @@ class PsiSupportTest : BasePlatformTestCase() {
                 "${'$'}{rocketmq.producer.topic.returnServiceAutoAudit}:${'$'}{rocketmq.producer.tag.returnServiceAutoAudit}"
             ).size
         )
+    }
+
+    fun testKafkaPlaceholderTopicDoesNotMatchEveryPropertyEndingWithTopic() {
+        myFixture.configureByText(
+            "KafkaAnnotations.java",
+            """
+                @interface KafkaListener {
+                    String[] topics() default {};
+                    String[] topic() default {};
+                    String[] value() default {};
+                }
+                class KafkaConsumers {
+                    @KafkaListener(topics = "${'$'}{spring.kafka.insertTradeOrderPostProcess.producer.topic}")
+                    void expected(String body) {}
+                    @KafkaListener(topics = "${'$'}{spring.kafka.sg-order-retail.producer.topic}")
+                    void unrelated(String body) {}
+                }
+            """.trimIndent()
+        )
+
+        val matches = EntryPointLocator(project).byMqTopic(
+            "${'$'}{spring.kafka.insertTradeOrderPostProcess.producer.topic}"
+        )
+
+        assertEquals(1, matches.size)
+        assertEquals("expected", matches.single().method.name)
     }
 
     fun testExtractsConfiguredRocketMqProducerAndConsumerNames() {

@@ -24,6 +24,7 @@ class EntryPointLocator(
     private val mappings = listOf("GetMapping", "PostMapping", "PutMapping", "DeleteMapping", "PatchMapping", "RequestMapping")
 
     fun byHttpPath(path: String): List<LocatedEntry> {
+        ProgressManager.checkCanceled()
         val expected = normalizePath(path)
         return allProjectMethods().mapNotNull { method ->
             ProgressManager.checkCanceled()
@@ -97,11 +98,19 @@ class EntryPointLocator(
 
     private fun matchesTopic(candidate: String, topic: String, expectedTopic: String): Boolean {
         val candidateTopic = candidate.substringBefore(':')
+        if (isPlaceholder(candidateTopic) || isPlaceholder(expectedTopic)) {
+            return candidate == topic ||
+                candidate == expectedTopic ||
+                candidateTopic == expectedTopic
+        }
         return candidate == topic ||
             candidate == expectedTopic ||
             candidateTopic == expectedTopic ||
             topicKey(candidateTopic) == topicKey(expectedTopic)
     }
+
+    private fun isPlaceholder(value: String): Boolean =
+        value.startsWith("\${") && value.endsWith("}")
 
     private fun topicKey(value: String): String =
         value.removeSurrounding("\${", "}").substringAfterLast('.')
@@ -115,8 +124,14 @@ class EntryPointLocator(
     private fun allProjectMethods(): Sequence<PsiMethod> {
         val manager = PsiManager.getInstance(project)
         return FileTypeIndex.getFiles(JavaFileType.INSTANCE, GlobalSearchScope.projectScope(project)).asSequence()
-            .mapNotNull { manager.findFile(it) as? PsiJavaFile }
-            .flatMap { PsiTreeUtil.findChildrenOfType(it, PsiMethod::class.java).asSequence() }
+            .mapNotNull {
+                ProgressManager.checkCanceled()
+                manager.findFile(it) as? PsiJavaFile
+            }
+            .flatMap {
+                ProgressManager.checkCanceled()
+                PsiTreeUtil.findChildrenOfType(it, PsiMethod::class.java).asSequence()
+            }
     }
 
     private fun requestMappingMethod(annotation: PsiAnnotation): String? {
