@@ -66,7 +66,7 @@ Kotlin 入口使用 [UAST](https://plugins.jetbrains.com/docs/intellij/uast.html
 - **MyBatis**：通过 Mapper 完整类名匹配 XML `namespace`，通过方法名匹配 statement `id`，展开 `<include>` 后解析 SQL。
 - **MyBatis-Plus**：识别 `BaseMapper`、`IService`、`ServiceImpl`、`Db` 和 Wrapper 常用 CRUD，通过实体 `@TableName` 或默认命名规则定位表。
 - **MyBatis Generator/通用 Mapper**：解析 `select/update/deleteByExample` 及 `tk.mybatis Mapper<T>` 等写法；通过调用点泛型继承链还原实体，禁止将 `T/Object` 误识别为表名。
-- **JPA**：根据 Repository 泛型、实体 `@Table`、Repository 方法和 `@Query` 识别表及读写操作。
+- **JPA**：根据 Repository 泛型、实体 `@Table` / `@Entity(name)`、Repository 方法和 `@Query` 识别表及读写操作。
 - **SQL**：优先使用 JSqlParser 解析；动态 SQL 无法完整解析时使用后备识别并降低置信度。
 - **Feign**：组合服务名或 URL、`@FeignClient.path`、类级 Mapping、方法级 Mapping 和 HTTP 方法；兼容 `JshFeignClient` 这类以 `FeignClient` 结尾的自定义注解，服务名或 URL 中的 `${...}` 会尝试解析为配置文件中的真实值。
 - **自定义 HTTP 工具**：按设置中的工具类前缀识别，使用方法名推断 HTTP 方法，并解析首个 URL 参数、局部变量、`String.format` URL、`@Value` 配置占位符和配置文件真实值。

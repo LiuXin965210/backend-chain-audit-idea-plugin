@@ -1402,6 +1402,33 @@ class PsiSupportTest : BasePlatformTestCase() {
         assertEquals(Confidence.CONFIRMED, resource.confidence)
     }
 
+    fun testExtractsJpaEntityNameAsTableName() {
+        myFixture.configureByText(
+            "JpaEntityNameRepository.java",
+            """
+                @interface Entity { String name() default ""; }
+                @Entity(name = "defective_product_order") class DefectiveProductOrder {}
+                interface JpaRepository<T, ID> { T saveAndFlush(T entity); }
+                interface DefectiveProductOrderRepository extends JpaRepository<DefectiveProductOrder, Long> {}
+                class DefectiveProductPrepareService {
+                    DefectiveProductOrderRepository repository;
+                    DefectiveProductOrder save(DefectiveProductOrder order) {
+                        return repository.saveAndFlush(order);
+                    }
+                }
+            """.trimIndent()
+        )
+
+        val method = findClass("DefectiveProductPrepareService").findMethodsByName("save", false).single()
+        val call = PsiTreeUtil.findChildOfType(method.body, PsiMethodCallExpression::class.java)!!
+        val resource = JpaExtractor()
+            .extract(CallContext(method, call, call.resolveMethod(), call.text)).single()
+
+        assertEquals("defective_product_order", resource.name)
+        assertEquals(Operation.WRITE, resource.operation)
+        assertEquals(Confidence.CONFIRMED, resource.confidence)
+    }
+
     fun testExtractsMyBatisPlusServiceWrapperAndDefaultTableName() {
         myFixture.configureByText(
             "MyBatisPlusService.java",

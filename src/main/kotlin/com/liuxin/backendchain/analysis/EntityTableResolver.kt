@@ -11,6 +11,8 @@ internal object EntityTableResolver {
             ?.let { return ResolvedTable(it, true) }
         annotationString(annotation(entity, "Table"), "name")?.takeIf { it.isNotBlank() }
             ?.let { return ResolvedTable(it, true) }
+        annotationString(annotation(entity, "Entity"), "name")?.takeIf { it.isNotBlank() }
+            ?.let { return ResolvedTable(it, true) }
         return entity.name?.let { ResolvedTable(camelToSnake(it.removeSuffix("Example")), false) }
     }
 

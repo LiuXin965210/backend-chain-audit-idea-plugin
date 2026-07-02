@@ -21,7 +21,7 @@ class JpaExtractor : ResourceExtractor {
             ?: target.containingClass?.takeIf { isRepository(it) }
             ?: return emptyList()
         val entity = resolveEntity(repository, target) ?: return emptyList()
-        val table = annotationString(annotation(entity, "Table"), "name") ?: entity.name ?: return emptyList()
+        val table = EntityTableResolver.resolve(entity) ?: return emptyList()
         val operation = when {
             target.name.startsWith("save") || target.name.startsWith("delete") || target.name.startsWith("remove") -> Operation.WRITE
             else -> Operation.READ
@@ -29,10 +29,11 @@ class JpaExtractor : ResourceExtractor {
         return listOf(
             ResourceRef(
                 ResourceType.MYSQL,
-                table,
+                table.name,
                 operation,
-                Confidence.INFERRED,
-                "JPA Repository ${repository.qualifiedName}.${target.name}",
+                if (table.explicit) Confidence.CONFIRMED else Confidence.INFERRED,
+                "JPA Repository ${repository.qualifiedName}.${target.name}" +
+                    if (table.explicit) "；实体注解表名" else "；按默认命名规则推断",
                 SmartPointerManager.getInstance(target.project).createSmartPsiElementPointer(target)
             )
         )
